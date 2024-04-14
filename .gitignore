@@ -1,0 +1,22 @@
+# Intellij
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+.idea_modules/
+
+# Gradle
+.gradle/
+build/
+.gradletasknamecache
+gradle-app.setting
+!gradle-wrapper.properties
+!gradle-wrapper.jar
+
+# CMake
+cmake-build-*/
+
+# Eclipse
+.project
+.classpath

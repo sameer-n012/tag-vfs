@@ -1,0 +1,20 @@
+plugins {
+    id 'java'
+}
+
+group 'com.narendran'
+version '1.0-SNAPSHOT'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    testImplementation group: 'junit', name: 'junit', version: '4.12'
+    testImplementation group: 'org.openjfx', name: 'javafx', version: '23-ea+3'
+    implementation group: 'commons-cli', name: 'commons-cli', version: '1.6.0'
+}
+
+jar {
+    archiveBaseName = 'filevault'
+}
