@@ -18,10 +18,10 @@ public class FileImporter {
     public FileImporter(String directory) { this.loadingDir = directory; }
 
     public Directory loadAll() throws IOException {
-        return this.loadDirectoryRecursive(new File(this.loadingDir).getCanonicalPath());
+        return this.loadDirectory(new File(this.loadingDir).getCanonicalPath(), true);
     }
 
-    public Directory loadDirectory(String path) {
+    public Directory loadDirectory(String path, boolean recursive) {
         File dir = new File(path);
         File[] files = dir.listFiles();
         if(files == null) {
@@ -34,50 +34,8 @@ public class FileImporter {
         for (File file : files) {
             FileInstance fi = null;
 
-            if (file.isDirectory()) {
-                continue;
-            } else if (!file.getName().contains(".")) { // if no file extension, load as plain text
-                fi = this.loadPlainText(file.getAbsolutePath());
-            } else if (file.getName().endsWith(".txt")) {
-                fi = this.loadPlainText(file.getAbsolutePath());
-            } else if (file.getName().endsWith(".rtf")) {
-                fi = this.loadRichText(file.getAbsolutePath());
-            } else if (file.getName().endsWith(".png")) {
-                fi = this.loadPNGImage(file.getAbsolutePath());
-            } else if (file.getName().endsWith(".jpg") || file.getName().endsWith(".jpeg")) {
-                fi = this.loadJPGImage(file.getAbsolutePath());
-            } else if (file.getName().endsWith(".lnk")) {
-                fi = this.loadLink(file.getAbsolutePath());
-            } else {
-                fi = this.loadUnsupported(file.getAbsolutePath());
-            }
-
-            size += fi.getSize();
-            children.add(fi);
-        }
-
-        Directory d = new Directory(path, dir.getName(), size, children);
-        for(FileInstance fi : children) {
-            fi.setParent(d);
-        }
-        return d;
-    }
-
-    public Directory loadDirectoryRecursive(String path) {
-        File dir = new File(path);
-        File[] files = dir.listFiles();
-        if(files == null) {
-            return null;
-        }
-
-        ArrayList<FileInstance> children = new ArrayList<>();
-        long size = 0;
-
-        for (File file : files) {
-            FileInstance fi = null;
-
-            if (file.isDirectory()) {
-                fi = this.loadDirectoryRecursive(file.getAbsolutePath());
+            if (file.isDirectory() && recursive) {
+                fi = this.loadDirectory(file.getAbsolutePath(), true);
             } else if (!file.getName().contains(".")) { // if no file extension, load as plain text
                 fi = this.loadPlainText(file.getAbsolutePath());
             } else if (file.getName().endsWith(".txt")) {
