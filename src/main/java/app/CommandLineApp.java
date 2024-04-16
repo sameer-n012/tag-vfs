@@ -1,7 +1,5 @@
 package app;
 
-import jdk.swing.interop.SwingInterOpUtils;
-
 import java.util.Scanner;
 
 public class CommandLineApp extends App {
@@ -16,16 +14,17 @@ public class CommandLineApp extends App {
 
     public void run() {
 
-        String input = null;
+        String input;
 
         while(true) {
             System.out.print(this.config.getConfigString("cliPrefix") + " ");
-            input = scn.nextLine();
+            input = scn.nextLine().trim();
 
             if(input.equals("quit")) {
                 System.out.print("Are you sure you want to quit? (y/n): ");
-                input = scn.nextLine();
+                input = scn.nextLine().trim();
                 if(input.equalsIgnoreCase("y")) {
+                    this.clean();
                     System.exit(0);
                 }
             } else if(input.equals("help")) {
@@ -38,7 +37,10 @@ public class CommandLineApp extends App {
     }
 
     public void printHelp() {
-        System.out.println(this.getHelp());
+        StringBuilder sb = new StringBuilder();
+        sb.append("help menu:");
+        sb.append("thing");
+        System.out.println(sb.toString());
     }
 
     public void printUnknownCommand(String command) {

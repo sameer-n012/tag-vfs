@@ -2,6 +2,7 @@ package app;
 
 import org.apache.commons.cli.*;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashMap;
@@ -12,20 +13,31 @@ import org.json.*;
 
 public class RunConfiguration {
 
-    // static file locations
-    private static final String DEFAULT_CONFIG_FILE_PATH = "/.conf.json";
-    private static final String USER_CONFIG_FILE_PATH = "/user.conf.json";
+    // static file locations in JAR
+    public static final String DEFAULT_CONFIG_FILE_PATH = "/.conf.json";
+    public static final String USER_CONFIG_FILE_PATH = "/user.conf.json";
+
+    // static final locations not in JAR
+    public static final String APP_DATA_DIR = "filevault";
+    public static final String CACHE_DIR = "tmp_" + String.valueOf(System.currentTimeMillis());
+    public static final String APP_ARCHIVE_FILE = "archive.dat";
 
     // Settings
     private HashMap<String, String> configMap;
     private String[] commandLineArgs;
 
     public RunConfiguration() {
+        this.setupConfig();
+    }
+
+    private void setupConfig() {
         this.configMap = new HashMap<>();
-        this.configMap.put("appName", "file-vault");
-        this.configMap.put("appNamePretty", "File Vault");
+        this.configMap.put("appName", App.APP_NAME);
+        this.configMap.put("appNamePretty", App.APP_NAME_PRETTY);
         this.configMap.put("javaVersion", System.getProperty("java.version"));
         this.configMap.put("javafxVersion", System.getProperty("javafx.version"));
+        this.configMap.put("userHome", System.getProperty("user.home"));
+        this.configMap.put("runPath", new File(".").getAbsolutePath());
     }
 
     // TODO Make sure to validate all user generated config
@@ -81,7 +93,6 @@ public class RunConfiguration {
             this.configMap.put(k, v);
         }
 
-
     }
 
     public void parseDefaultConfigFile() throws IOException {
@@ -106,8 +117,7 @@ public class RunConfiguration {
     }
 
     public void resetConfig() throws IOException {
-        this.configMap = new HashMap<>();
-        this.parseDefaultConfigFile();
+        this.setupConfig();
     }
 
     public int getConfigInt(String key) {
@@ -140,6 +150,7 @@ public class RunConfiguration {
     }
 
     private static class RunConfigurationConstraints {
+
         // configuration constraints
         private static final String INT_FIELDS = ",fontSizeLG,fontSizeMD,fontSizeSM,";
         private static final String POS_INT_FIELDS = ",fontSizeLG,fontSizeMD,fontSizeSM,";
