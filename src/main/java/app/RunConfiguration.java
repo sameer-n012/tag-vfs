@@ -45,6 +45,19 @@ public class RunConfiguration {
 
     public long getSessionID() { return this.sessionID; }
 
+    public String updateConfig(String key, String value, boolean persist) {
+        if(!RunConfigurationConstraints.checkConstraints(key, value)) {
+            throw new IllegalArgumentException("Invalid config values");
+        }
+        String old = this.configMap.put(key, value);
+
+        if(persist) {
+            // TODO write to user settings file
+        }
+
+        return old;
+    }
+
     public String getAppHomePathAbsolute() {
         return this.configMap.get("userHome") +
                 File.separator + RunConfiguration.APP_DATA_DIR;
@@ -165,6 +178,11 @@ public class RunConfiguration {
 
     public long getConfigLong(String key) {
         return Long.parseLong(this.configMap.get(key));
+    }
+
+    public String toString() {
+        // TODO implement pretty string
+        return "Run Configuration:";
     }
 
     private static class RunConfigurationConstraints {

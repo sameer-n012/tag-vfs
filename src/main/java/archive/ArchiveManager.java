@@ -9,9 +9,8 @@ import java.awt.*;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
+import java.util.*;
+import java.util.Map.Entry;
 
 public class ArchiveManager {
 
@@ -24,13 +23,13 @@ public class ArchiveManager {
     private Archive archive;
     private RunConfiguration runConfig;
 
-    public HashSet<Short> openFiles;
-    public HashMap<Short, String> cacheFileNames;
+    public HashMap<Short, FileInstance> openFiles; // maps fileno to file instance object
+    public HashMap<Short, String> cacheFileNames; // maps fileno to cache file name
     public FileImporter cacheFileLoader;
 
     public ArchiveManager(RunConfiguration runConfig) {
         this.runConfig = runConfig;
-        this.openFiles = new HashSet<>();
+        this.openFiles = new HashMap<>();
         this.cacheFileNames = new HashMap<>();
         this.cacheFileLoader = new FileImporter(runConfig.getCachePathAbsolute());
     }
@@ -85,19 +84,23 @@ public class ArchiveManager {
         this.archive = new Archive(new File(this.runConfig.getArchivePathAbsolute()));
     }
 
-    public ArrayList<FileInstance> openFile(String filename) throws IOException {
+    public void open(String filename) throws IOException {
+        this.cache(filename, true);
+    }
+
+    private ArrayList<FileInstance> cache(String filename, boolean open) throws IOException {
         ArrayList<FileDirectoryEntry> fdes = this.archive.getFDE(filename);
         ArrayList<FileInstance> out = new ArrayList<>(fdes.size());
 
         for(FileDirectoryEntry fde : fdes) {
-            if(this.openFiles.contains(fde.getFileno())) {
+            if(this.openFiles.containsKey(fde.getFileno())) {
                 if(!this.runConfig.getConfigBool("gui")) {
                     System.out.println("File " + filename + " is already open as \"" +
                             this.cacheFileNames.get(fde.getFileno()) + "\"");
                 }
                 File f = new File(this.runConfig.getCachePathAbsolute() +
                         this.cacheFileNames.get(fde.getFileno()));
-                Desktop.getDesktop().open(f);
+                if(open) { Desktop.getDesktop().open(f); }
                 out.add(cacheFileLoader.loadFile(f.getAbsolutePath(), false));
                 continue;
             }
@@ -113,11 +116,12 @@ public class ArchiveManager {
             fos.close();
 
             this.cacheFileNames.put(fde.getFileno(), cacheFilename);
-            this.openFiles.add(fde.getFileno());
             File f = new File(this.runConfig.getCachePathAbsolute() +
                     cacheFilename);
-            Desktop.getDesktop().open(f);
-            out.add(cacheFileLoader.loadFile(f.getAbsolutePath(), false));
+            FileInstance fi = cacheFileLoader.loadFile(f.getAbsolutePath(), false);
+            this.openFiles.put(fde.getFileno(), fi);
+            if(open) { Desktop.getDesktop().open(f); }
+            out.add(fi);
 
             if(!this.runConfig.getConfigBool("gui")) {
                 System.out.println("Opened " + filename + " as \"" +
@@ -127,8 +131,99 @@ public class ArchiveManager {
         }
 
         return out;
+    }
+
+    public void flush(Set<String> filenames, Set<String> tags) {
+
+        for(Entry<Short, FileInstance> e : this.openFiles.entrySet()) {
+
+            if(filenames != null && !filenames.contains(e.getValue().getName())) {
+                continue;
+            }
+
+            if(tags != null) {
+                Set<String> intersection = new HashSet<>(tags);
+                intersection.retainAll(new HashSet<String>(e.getValue().getTags()));
+                if (intersection.isEmpty()) {
+                    continue;
+                }
+            }
+
+            // TODO flush file here
+
+        }
 
     }
+
+    public void flushAll() {
+        this.flush(null, null);
+    }
+
+    public void destroy(Set<String> filenames, Set<String> tags) {
+
+        ArrayList<Short> toDestroy = new ArrayList<>();
+
+        for(Entry<Short, FileInstance> e : this.openFiles.entrySet()) {
+
+            if(filenames != null && !filenames.contains(e.getValue().getName())) {
+                continue;
+            }
+
+            if(tags != null) {
+                Set<String> intersection = new HashSet<>(tags);
+                intersection.retainAll(new HashSet<String>(e.getValue().getTags()));
+                if (intersection.isEmpty()) {
+                    continue;
+                }
+            }
+
+            toDestroy.add(e.getKey());
+
+        }
+
+        // TODO destroy file here
+        for(Short s : toDestroy) {
+            File f = new File(this.openFiles.get(s).getPath());
+            f.delete();
+            if(!this.runConfig.getConfigBool("gui")) {
+                System.out.println("Destroyed " + this.cacheFileNames.get(s) + "\"");
+            }
+            this.cacheFileNames.remove(s);
+            this.openFiles.remove(s);
+
+        }
+
+    }
+
+    public void destroyAll() {
+        this.destroy(null, null);
+    }
+
+    public void remove(Set<String> filenames, Set<String> tags) {}
+
+    public void importFiles(Set<String> paths, boolean recursive) {}
+
+    public void addTags(Set<String> filenames, Set<String> tags) {}
+
+    public void removeTags(Set<String> filenames, Set<String> tags) {}
+
+    public void listFiles(Set<String> filenames, Set<String> tags) {}
+
+    public void sizeOf(Set<String> filenames, Set<String> tags) {}
+
+    public void apply(Set<String> filenames, Set<String> tags) {}
+
+    public void scrape(Set<String> filenames, Set<String> tags) {}
+
+    public void merge(File f) {}
+
+    public void expand(String destination, String filepath) {}
+
+    public void expand(String destination) {}
+
+    public void reduce(Set<String> paths, boolean recursive) {}
+
+
 
 
 

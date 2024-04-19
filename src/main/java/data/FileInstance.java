@@ -9,6 +9,7 @@ import java.nio.file.Paths;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.Set;
 
 public abstract class FileInstance {
 
@@ -17,6 +18,7 @@ public abstract class FileInstance {
 	protected final long size;
 	protected final String path;
 	protected Directory parent;
+	protected Set<String> tags;
 
 	public FileInstance(String path, String name, FileType type, Long size) {
 		this.name = name;
@@ -32,6 +34,7 @@ public abstract class FileInstance {
 	public boolean isDirectory() { return this.type == FileType.DIR; }
 	public boolean isEncryptable() { return false; }
 	public Directory getParent() { return this.parent; }
+	public Set<String> getTags() { return this.tags; }
 
 	public String getFormattedSize() {
 		if(size <= 0) return "0 B";

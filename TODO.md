@@ -21,11 +21,12 @@ Sub-points indicate optional arguments
 - `help` shows help text
 - `config <key> <value>` sets a key and value for the application configuration
     - `-p` persists the key and value across application sessions
-- `config` opens the user configuration file for editing
+    - `-l` lists all config key-value pairs
 - `flush` writes updates from a set of currently open files to the `.dat` storage file
     - `-t <tag1> ...` apply only to files with the given tags
     - `-f <file1> ...` apply only to files with the given names
     - `-a` writes all files that have been updated (overrides `-f`, `-t`)
+    - `-d` destroys the cached files after flushing all updates
 - `ls <tag1> ...` lists all files with the given set of tags
 - `sz <tag1> ...` lists the combined size of all files with given tags
 - `remove -f <file1> ... -t <tag1> ...` removes the files with the given filenames and tags from the `.dat` storage file
