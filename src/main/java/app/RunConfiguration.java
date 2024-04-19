@@ -26,7 +26,10 @@ public class RunConfiguration {
     private HashMap<String, String> configMap;
     private String[] commandLineArgs;
 
+    public long sessionID;
+
     public RunConfiguration() {
+        this.sessionID = System.currentTimeMillis();
         this.setupConfig();
     }
 
@@ -38,6 +41,21 @@ public class RunConfiguration {
         this.configMap.put("javafxVersion", System.getProperty("javafx.version"));
         this.configMap.put("userHome", System.getProperty("user.home"));
         this.configMap.put("runPath", new File(".").getAbsolutePath());
+    }
+
+    public long getSessionID() { return this.sessionID; }
+
+    public String getAppHomePathAbsolute() {
+        return this.configMap.get("userHome") +
+                File.separator + RunConfiguration.APP_DATA_DIR;
+    }
+
+    public String getCachePathAbsolute() {
+         return this.getAppHomePathAbsolute() + File.separator + RunConfiguration.APP_ARCHIVE_FILE;
+    }
+
+    public String getArchivePathAbsolute() {
+        return this.getAppHomePathAbsolute() + File.separator + RunConfiguration.APP_ARCHIVE_FILE;
     }
 
     // TODO Make sure to validate all user generated config

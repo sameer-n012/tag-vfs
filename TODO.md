@@ -37,54 +37,56 @@ Sub-points indicate optional arguments
 
 ### Zeroth Section - Section Pointers
 - first value is 16-bit magic number 13579
-- (k+1)th value is a 48-bit offset from the start of this section to section k
+- (k+1)th value is a 48-bit byte-granular offset from the start of this section to section k
 - section length is 208 bits
 
 ### First Section - File Directory
 - first value is 16-bit unsigned short representing number of file slots in directory (max 65536)
 - second value is 16-bit unsigned short representing number of file slots used in directory
 - file slots in directory must be filled contiguously
-- file slot is a 112-bit tuple `(v, p, n, o, l)`
+- file slot is a 112-bit tuple `(l, v, p, n, o)`
+    - `l` is the 39-bit length of the file
     - `v` is a valid bit, 1 if valid
     - `p` is the 16-bit index of the parent in the file directory (TODO remove - only use tags)
         - since could be n^2 time otherwise, try to always keep parent before child
     - `n` is the 16-bit hash of the file name
     - `o` is the 40-bit offset from the start of section 4 to the start of the file
-    - `l` is the 39-bit length of the file
 
 ### Second Section - Tag Directory
 - first value is 16-bit unsigned short representing number of tag slots in directory (max 32k)
 - second value is 16-bit unsigned short representing number of tag slots used in directory
 - tag slots in directory must be filled contiguously
-- rest of values are tag slot 144-bit tuple `(v, i, t)`
+- rest of values are tag slot 184-bit tuple `(v, i, t, o)`
     - `v` is a valid bit, 1 if valid
     - `i` is a 15-bit unsigned short identifying the tag
     - `t` is a 16-byte string of the tag name
+    - `o` is the 40-bit offset from the start of the tag lookup section to first tag lookup tuple
 
 ### Third Section - Tag Lookup
-- first value is 16-bit unsigned integer representing number of tuples in section (max 65k)
-- second value is 16-bit unsigned integer representing number of used tuples in section
-- list of (32+16k)-bit tuples `(v, i, n, f1, f2, ...)`
+- first value is 16-bit unsigned integer representing the size of the section in bytes
+- second value is 16-bit unsigned integer representing number of tuples in section
+- list of (80+16k)-bit tuples `(v, i, n, f1, f2, ...)`
     - `v` is a valid bit, 1 if the tuple is valid
     - `i` is a 15-bit unsigned byte identifying the tag (corresponding to section 2)
+    - `s` is an 8-bit number representing the number of file slots in the tuple
     - `n` is a 16-bit unsigned short representing the number of files with the given tag
+        - `n` should represent valid `f` entries in this tuple alone, plus 1 if the next pointer is valid
     - `f` is a 16-bit unsigned short representing the index of a file with the tag
-        - can have at most 248 file values in the tuple
-        - next 8 16-bit values treated as indirect indices to another tuple in this section
-            - other tuple contains 248 more file indices and 8 more indirects
-        - `n` should represent valid `f` entries in this tuple alone
-        - can have at most 65536 files for each tag
+        - first tuples for tags have 16 file pointers, then 32, ...
+    - `o` is a 40-bit offset from the start of this section to the next tuple for this tag
 
 ### Fourth Section - File Storage
 - each file is represented by a metadata file and then the data and then end-metadata
-- metadata file is 2136-bit tuple `(v, f, p, y, (tn, ti1, ti2, ...), l)`
+- metadata file is k-bit tuple `(l, v, f, p, y, nn, (tn, ti1, ti2, ...), n)`
+    - `l` is a 39-bit unsigned integer representing the length of the data
     - `v` is a valid bit, 1 if this file is valid
     - `f` is a 16-bit unsigned short representing the index of a file
     - `p` is a 16-bit index of the parent in the file directory
     - `y` is a 8-bit number representing the file type
+    - `nn` is the 8-bit number representing the length of the file name
     - `tn` is a 16-bit unsigned short representing the number of tags corresponding to the file
     - `ti` is the 15-bit unsigned short identifying the tag
-    - `l` is a 39-bit unsigned integer representing the length of the data
+    - `n` is the `nn` byte length string representing the name of the file
 - data is arbitrary length
 - end-metadata is 40-bit unsigned integer representing length of data
 

@@ -1,5 +1,7 @@
 package util;
 
+import java.nio.ByteBuffer;
+
 public class Conversion {
 
     public static int ushtoi(short sh) { return sh & 0xffff; }
@@ -22,6 +24,11 @@ public class Conversion {
                 ((bytes[1] & 0xFF) << 0 ));
     }
 
+    public static short batob(byte[] bytes) {
+        return bytes[0];
+    }
+
+
     public static byte[] itoba(int value) {
         return new byte[] {
                 (byte) (value >>> 24),
@@ -37,6 +44,21 @@ public class Conversion {
             b[i] = (byte) (value >>> 8*(n-i-1));
         }
         return b;
+    }
+
+    public static long batol(byte[] arr, int n) {
+
+        ByteBuffer bb = ByteBuffer.allocate(8);
+
+        if(n < 8) {
+            byte[] pref = new byte[8-n];
+            for (int i = n; i < 8; i++) {
+                pref[0] = 0;
+            }
+            bb.put(pref);
+        }
+        bb.put(arr);
+        return bb.getLong();
     }
 
 }

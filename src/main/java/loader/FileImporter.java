@@ -63,6 +63,32 @@ public class FileImporter {
         return d;
     }
 
+    public FileInstance loadFile(String path, boolean recursive) {
+        File file = new File(path);
+
+        FileInstance fi = null;
+
+        if (file.isDirectory() && recursive) {
+            return loadDirectory(path, true);
+        } else if (!file.getName().contains(".")) { // if no file extension, load as plain text
+            fi = this.loadPlainText(file.getAbsolutePath());
+        } else if (file.getName().endsWith(".txt")) {
+            fi = this.loadPlainText(file.getAbsolutePath());
+        } else if (file.getName().endsWith(".rtf")) {
+            fi = this.loadRichText(file.getAbsolutePath());
+        } else if (file.getName().endsWith(".png")) {
+            fi = this.loadPNGImage(file.getAbsolutePath());
+        } else if (file.getName().endsWith(".jpg") || file.getName().endsWith(".jpeg")) {
+            fi = this.loadJPGImage(file.getAbsolutePath());
+        } else if (file.getName().endsWith(".lnk")) {
+            fi = this.loadLink(file.getAbsolutePath());
+        } else {
+            fi = this.loadUnsupported(file.getAbsolutePath());
+        }
+
+        return fi;
+    }
+
     public FileInstance loadPlainText(String path) {
         try {
             BasicFileAttributes attr = Files.readAttributes(Path.of(path), BasicFileAttributes.class);
