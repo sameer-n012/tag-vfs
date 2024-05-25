@@ -754,10 +754,90 @@ public class Archive {
 
     }
 
-    private TagDirectoryEntry createTag(String tag) {
+    /**
+     * Creates a tag by creating the corresponding tag directory entry and initial tag lookup tuple.
+     * Will try to resize archive if there is not enough space. Does not add the tag if a tag with the same
+     * name already exists.
+     *
+     * @param tag the name of the tag to add.
+     * @return the tag directory entry of the new tag.
+     * @throws IOException if it failed to read the archive file.
+     */
+    private TagDirectoryEntry createTag(String tag) throws IOException {
         // TODO
-        this.numTagDirSlotsUsed++;
-        return null;
+
+        try {
+            TagDirectoryEntry tde = null;
+            if ((tde = this.getTDE(tag)) != null) {
+                return tde;
+            }
+
+            // resize if necessary
+            if(this.numTagDirSlotsUsed >= this.numTagDirSlots ||
+                    this.tagLookupSectionSizeUsed + TagLookupEntry.MIN_SIZE_BYTES>= this.tagLookupSectionSize) {
+                this.resizeArchive();
+            }
+
+            this.tglkL.writeLock().lock();
+
+            seek(this.tglkMBB, 4);
+            byte[] tmp = new byte[3];
+            int off = 0;
+            TagLookupEntry tle = null;
+            while(off <= this.tagLookupSectionSize) {
+
+                this.tglkMBB.get(tmp, 0, 3);
+
+                int size = 3 + 2 + tmp[2]*2 + 5;
+
+                // check if valid is false, then found
+                if(tmp[0] < 0 && size >= TagLookupEntry.MIN_SIZE_BYTES) { break; }
+
+            }
+
+            this.tgdrL.writeLock().lock();
+
+            seek(this.tgdrMBB, 4);
+
+            byte[] buffer = new byte[TagDirectoryEntry.SIZE_BYTES];
+
+            short tidx = 0;
+            for (int i = 0; i < this.numTagDirSlots; i++) {
+                this.tgdrMBB.get(buffer, 0, TagDirectoryEntry.SIZE_BYTES);
+
+                // check if valid bit is false (we can insert here)
+                if(buffer[0] >> 3 == 0) {
+                    // create tde
+                    tidx = (short) i;
+                    tde = new TagDirectoryEntry((short) i, true, tag, off);
+
+                    // rewind so we can put data in
+                    seek(this.tgdrMBB, -TagDirectoryEntry.SIZE_BYTES);
+                    this.tgdrMBB.put(tde.toBytes());
+                }
+            }
+
+            tglkMBB.rewind();
+            seek(tglkMBB, off);
+            tle = new TagLookupEntry(tidx, true, (byte) TagLookupEntry.INITIAL_NUMBER_SLOTS,
+                    (short) 0, null, -1);
+            tglkMBB.put(tle.toBytes());
+
+            this.numTagDirSlotsUsed++;
+            this.tagLookupSectionSizeUsed += tle.getLength();
+
+            return tde;
+
+        } finally {
+
+            this.tgdrMBB.rewind();
+            this.tglkMBB.rewind();
+
+            this.tgdrL.writeLock().unlock();
+            this.tglkL.writeLock().unlock();
+
+        }
+
     }
 
     private void removeTag(short tagno) {
@@ -766,16 +846,68 @@ public class Archive {
     }
 
     private TagDirectoryEntry addTagToFile(short tagno, short fileno) {
-        // TODO add to tag lookup + file metadata
+        // TODO add to tag lookup/dir + file metadata
+        return null;
+    }
+
+    private TagLookupEntry addTagToFileInTagLookup(short tagno, short fileno) {
+        // TODO
         return null;
     }
 
     private void removeTagFromFile(short tagno, short fileno) {
         // TODO remove from tag lookup + file metadata
+        // remove from dir if no references
     }
 
-    protected TagDirectoryEntry getTDE(String tag) {
+    private void removeTagFromFileInTagLookup(short tagno, short fileno) {
         // TODO
+    }
+
+    /**
+     * Searches for a valid tag directory entry with a tag that matches the name
+     * given.
+     *
+     * @param tag the name of the tag to search for.
+     * @return the tag directory entry found.
+     * @throws IOException if it failed to read the archive file.
+     */
+    protected TagDirectoryEntry getTDE(String tag) throws IOException {
+
+        try {
+
+            int j = 0;
+            byte[] buffer = new byte[TagDirectoryEntry.SIZE_BYTES];
+            byte[] name = new byte[16];
+
+            this.tgdrL.readLock().lock();
+
+            seek(this.tgdrMBB, 4);
+
+            for (int i = 0; i < this.numTagDirSlots; i++) {
+                this.tgdrMBB.get(buffer, 0, TagDirectoryEntry.SIZE_BYTES);
+
+                // check if valid bit is true
+                if(buffer[0] < 0) {
+                    // increment number of valid tdes for early break
+                    j++;
+
+                    // check if tag name matches
+                    System.arraycopy(buffer, 2, name, 0, 16);
+                    if(tag.equals(new String(name))) { return new TagDirectoryEntry(buffer, (short) i); }
+                }
+
+                // break early if already checked all valid tdes
+                if(j == numTagDirSlotsUsed) { break; }
+
+            }
+
+        } finally {
+            this.tgdrMBB.rewind();
+            this.tgdrL.readLock().unlock();
+        }
+
+
         return null;
     }
 
@@ -843,6 +975,8 @@ public class Archive {
             raf.close();
 
             this.fileStorageSectionSizeUsed += fm.getMetadataLength() + fm.getLength() + FileEndMetadata.SIZE_BYTES;
+
+            // TODO write to tag lookup
 
             return fde.getFileno();
 
