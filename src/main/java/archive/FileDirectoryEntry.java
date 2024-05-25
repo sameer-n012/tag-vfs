@@ -2,6 +2,8 @@ package archive;
 
 import util.Conversion;
 
+import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
 import java.util.BitSet;
 
 public class FileDirectoryEntry {
@@ -23,6 +25,16 @@ public class FileDirectoryEntry {
 
     private BitSet fde;
     private short fileno;
+
+    public FileDirectoryEntry(short fileno, long length, boolean valid, short parent, short filenameHash, long offset) {
+        ByteArrayOutputStream bb = new ByteArrayOutputStream(SIZE_BYTES);
+        bb.write(Conversion.ltoba(length + (valid ? 1 : 0), 5), 0, 5);
+        bb.write(Conversion.ltoba(parent, 2), 0, 2);
+        bb.write(Conversion.ltoba(filenameHash, 2), 0, 2);
+        bb.write(Conversion.ltoba(offset, 5), 0, 5);
+        this.fde = BitSet.valueOf(bb.toByteArray());
+        this.fileno = fileno;
+    }
 
     public FileDirectoryEntry(byte[] fde, short fileno) {
         if(fde.length != SIZE_BYTES) {
@@ -53,6 +65,8 @@ public class FileDirectoryEntry {
     public long getFileOffset() {
         return Conversion.batol(this.fde.get(FPTR_INDEX_START, FPTR_INDEX_END).toByteArray(), 5);
     }
+
+    public byte[] toBytes() { return fde.toByteArray(); }
 
 
 }

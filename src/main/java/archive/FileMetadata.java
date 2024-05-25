@@ -2,6 +2,9 @@ package archive;
 
 import util.Conversion;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.BitSet;
 
@@ -30,8 +33,29 @@ public class FileMetadata {
 
     private BitSet fm;
     private int length;
-    private int noTags;
-    private int nmSz;
+    private short noTags;
+    private byte nmSz;
+
+    public FileMetadata(long length, boolean valid, short fileno, short parent, byte type, String filename, short[] tags) throws IOException {
+        this.noTags = (short) ((tags != null) ? tags.length : 0);
+        if(filename == null) { filename = ""; }
+        this.nmSz = (byte) filename.length();
+        ByteArrayOutputStream bb = new ByteArrayOutputStream(MIN_SIZE_BYTES + this.nmSz + TAG_SIZE_BYTES*this.noTags);
+        bb.write(Conversion.ltoba(length + (valid ? 1 : 0), 5), 0, 5);
+        bb.write(Conversion.ltoba(fileno, 2), 0, 2);
+        bb.write(Conversion.ltoba(parent, 2), 0, 2);
+        bb.write(Conversion.ltoba(type, 1), 0, 1);
+        bb.write(Conversion.ltoba(this.nmSz, 1), 0, 1);
+        bb.write(Conversion.ltoba(this.noTags, 2), 0, 2);
+        if(tags != null) {
+            for(short t : tags) {
+                bb.write(Conversion.ltoba(t, 2), 0, 2);
+            }
+        }
+        bb.write(filename.getBytes(Charset.defaultCharset()));
+        this.fm = BitSet.valueOf(bb.toByteArray());
+        this.length = fm.length();
+    }
 
     public FileMetadata(byte[] fm) {
         if(fm.length < MIN_SIZE_BYTES) {
@@ -88,6 +112,12 @@ public class FileMetadata {
 
     public int getMetadataLength() {
         return this.length;
+    }
+
+    public byte[] toBytes() { return fm.toByteArray(); }
+
+    public static int calculateMetadataLength(short filenameSize, short noTags) {
+        return MIN_SIZE_BYTES + filenameSize + noTags * TAG_SIZE_BYTES;
     }
 
 

@@ -43,6 +43,10 @@ public class RunConfiguration {
         this.configMap.put("runPath", new File(".").getAbsolutePath());
     }
 
+    public String getAppName() { return this.configMap.get("appName"); }
+
+    public String getAppNamePretty() { return this.configMap.get("appNamePretty"); }
+
     public long getSessionID() { return this.sessionID; }
 
     public String updateConfig(String key, String value, boolean persist) {

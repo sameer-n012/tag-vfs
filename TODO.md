@@ -1,7 +1,9 @@
 # Commands to Implement
 Sub-points indicate optional arguments
 
-- `open <file>` opens a file with system viewer
+- `open` opens a file with system viewer
+    - `-t <tag1> ...` open only files with the given tags
+    - `-f <file1> ...` open only files with the given names
 - `apply <script>` applies a python script to a set of files
     - `-t <tag1> ...` apply only to files with the given tags
     - `-f <file1> ...` apply only to files with the given names
@@ -12,7 +14,9 @@ Sub-points indicate optional arguments
 - `import <file1> ...` imports a set of files into the application's `.dat` storage file
     - `-r` recursively import, will not import directories without
 - `merge <file>` merges a `.dat` file into the application's working `.dat` storage file
-- `scrapel <file>` scrapes the webpage corresponding to a link file and caches the results
+- `scrape` scrapes the webpage corresponding to a link file and caches the results
+    - `-t <tag1> ...` scrape only files with the given tags
+    - `-f <file1> ...` scrape only files with the given names
 - `destroy` removes the set of files from the temporary application cache, deleting any updates
     - `-t <tag1> ...` apply only to files with the given tags
     - `-f <file1> ...` apply only to files with the given names

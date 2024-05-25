@@ -36,48 +36,11 @@ public class ArchiveManager {
 
 
     public void createArchiveFile() throws IOException, SecurityException {
-
-        FileOutputStream fos = new FileOutputStream(this.runConfig.getArchivePathAbsolute());
-
-        // write section 0
-        fos.write(Conversion.ltoba(Archive.MAGIC_NUMBER, 2));
-        int offset = 48 * 4 + 16;
-        fos.write(Conversion.ltoba(offset, 6));
-        offset += 16 * 2 + FileDirectoryEntry.SIZE_BYTES * ArchiveManager.INITIAL_FILE_DIR_SLOTS;
-        fos.write(Conversion.ltoba(offset, 6));
-        offset += 16 * 2 + TagDirectoryEntry.SIZE_BYTES * ArchiveManager.INITIAL_TAG_DIR_SLOTS;
-        fos.write(Conversion.ltoba(offset, 6));
-        offset += 32 + 16 + TagLookupEntry.MIN_SIZE_BYTES * ArchiveManager.INITIAL_TAG_DIR_SLOTS;
-        fos.write(Conversion.ltoba(offset, 6));
-
-        // write section 1
-        fos.write(Conversion.ltoba(ArchiveManager.INITIAL_FILE_DIR_SLOTS, 2));
-        fos.write(Conversion.ltoba(0, 2));
-        byte[] buffer = new byte[ArchiveManager.INITIAL_FILE_DIR_SLOTS * FileDirectoryEntry.SIZE_BYTES];
-        fos.write(buffer);
-
-        // write section 2
-        fos.write(Conversion.ltoba(ArchiveManager.INITIAL_TAG_DIR_SLOTS, 2));
-        fos.write(Conversion.ltoba(0, 2));
-        buffer = new byte[ArchiveManager.INITIAL_TAG_DIR_SLOTS * TagDirectoryEntry.SIZE_BYTES];
-        fos.write(buffer);
-
-        // write section 3
-        fos.write(Conversion.ltoba(ArchiveManager.INITIAL_TAG_LOOKUP_SPACE_BYTES, 4));
-        fos.write(Conversion.ltoba(0, 2));
-        buffer = new byte[ArchiveManager.INITIAL_TAG_LOOKUP_SPACE_BYTES];
-        fos.write(buffer);
-
-        // write section 4
-        int bufSize = 1024 * 1024;
-        buffer = new byte[bufSize];
-        for (int i = 0; i < ArchiveManager.INITIAL_FILE_STORAGE_SPACE_BYTES/bufSize; i++) {
-            fos.write(buffer);
-        }
-        buffer = new byte[(int) (ArchiveManager.INITIAL_FILE_STORAGE_SPACE_BYTES % bufSize)];
-        fos.write(buffer);
-
-        this.readArchiveFile();
+        File f = new File(this.runConfig.getArchivePathAbsolute());
+        Archive.create(f,
+                INITIAL_FILE_DIR_SLOTS, INITIAL_TAG_DIR_SLOTS,
+                INITIAL_TAG_LOOKUP_SPACE_BYTES, INITIAL_FILE_STORAGE_SPACE_BYTES);
+        this.archive = new Archive(f);
     }
 
     public void readArchiveFile() throws IOException {
@@ -87,6 +50,8 @@ public class ArchiveManager {
     public void open(String filename) throws IOException {
         this.cache(filename, true);
     }
+
+    public void open(ArrayList<String> filenames, ArrayList<String> tags) { }
 
     private ArrayList<FileInstance> cache(String filename, boolean open) throws IOException {
         ArrayList<FileDirectoryEntry> fdes = this.archive.getFDE(filename);
@@ -133,7 +98,7 @@ public class ArchiveManager {
         return out;
     }
 
-    public void flush(Set<String> filenames, Set<String> tags) {
+    public void flush(ArrayList<String> filenames, ArrayList<String> tags) {
 
         for(Entry<Short, FileInstance> e : this.openFiles.entrySet()) {
 
@@ -143,7 +108,7 @@ public class ArchiveManager {
 
             if(tags != null) {
                 Set<String> intersection = new HashSet<>(tags);
-                intersection.retainAll(new HashSet<String>(e.getValue().getTags()));
+                intersection.retainAll(new HashSet<>(e.getValue().getTags()));
                 if (intersection.isEmpty()) {
                     continue;
                 }
@@ -159,7 +124,7 @@ public class ArchiveManager {
         this.flush(null, null);
     }
 
-    public void destroy(Set<String> filenames, Set<String> tags) {
+    public void destroy(ArrayList<String> filenames, ArrayList<String> tags) {
 
         ArrayList<Short> toDestroy = new ArrayList<>();
 
@@ -199,29 +164,47 @@ public class ArchiveManager {
         this.destroy(null, null);
     }
 
-    public void remove(Set<String> filenames, Set<String> tags) {}
+    public void remove(ArrayList<String> filenames, ArrayList<String> tags) throws IOException {
 
-    public void importFiles(Set<String> paths, boolean recursive) {}
+        ArrayList<FileDirectoryEntry> fdes = new ArrayList<>();
+        for(String fn : filenames) {
+            fdes.addAll(this.archive.getFDE(fn));
+        }
 
-    public void addTags(Set<String> filenames, Set<String> tags) {}
+        for (Iterator<FileDirectoryEntry> it = fdes.iterator(); it.hasNext(); ) {
+            short[] tmp = this.archive.getFM(it.next().getFileOffset()).getTags();
+            ArrayList<Short> ts = new ArrayList<>();
+            for(short t : tmp) { ts.add(t); }
+            if(!ts.containsAll(tags)) { it.remove(); break; }
+        }
 
-    public void removeTags(Set<String> filenames, Set<String> tags) {}
+        for(FileDirectoryEntry fde : fdes) {
+            this.archive.delete(fde.getFileno());
+        }
 
-    public void listFiles(Set<String> filenames, Set<String> tags) {}
+    }
 
-    public void sizeOf(Set<String> filenames, Set<String> tags) {}
+    public void importFiles(ArrayList<String> paths, boolean recursive) {}
 
-    public void apply(Set<String> filenames, Set<String> tags) {}
+    public void addTags(ArrayList<String> filenames, ArrayList<String> tags, ArrayList<String> tagsToAdd) {}
 
-    public void scrape(Set<String> filenames, Set<String> tags) {}
+    public void removeTags(ArrayList<String> filenames, ArrayList<String> tags, ArrayList<String> tagsToRemove) {}
 
-    public void merge(File f) {}
+    public void listFiles(ArrayList<String> tags) {}
+
+    public void sizeOf(ArrayList<String> tags) {}
+
+    public void apply(ArrayList<String> filenames, ArrayList<String> tags) {}
+
+    public void scrape(ArrayList<String> filenames, ArrayList<String> tags) {}
+
+    public void merge(String path) {}
 
     public void expand(String destination, String filepath) {}
 
     public void expand(String destination) {}
 
-    public void reduce(Set<String> paths, boolean recursive) {}
+    public void reduce(ArrayList<String> paths, boolean recursive) {}
 
 
 

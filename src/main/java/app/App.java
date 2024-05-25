@@ -15,7 +15,8 @@ public abstract class App {
     public static final String APP_NAME = "file-vault";
     public static final String APP_NAME_PRETTY = "File Vault";
 
-    public RunConfiguration config;
+    protected RunConfiguration config;
+    protected ArchiveManager am;
 
     public App(RunConfiguration config) {
         this.config = config;
@@ -61,15 +62,15 @@ public abstract class App {
                 throw new FileNotFoundException("No suitable location to persist app");
             }
 
-            ArchiveManager archiveManager = new ArchiveManager(this.config);
+            this.am = new ArchiveManager(this.config);
 
             if (!f.exists()) {
-                archiveManager.createArchiveFile();
+                this.am.createArchiveFile();
             } else {
                 // TODO uncomment when done testing
-//                this.archive = ArchiveFactory.readArchiveFile(appHomePath +
+//                this.am.readArchiveFile(appHomePath +
 //                        File.separator + RunConfiguration.APP_ARCHIVE_FILE);
-                archiveManager.createArchiveFile();
+                this.am.createArchiveFile();
             }
 
         } catch(SecurityException | IOException e) {

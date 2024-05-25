@@ -61,4 +61,11 @@ public class Conversion {
         return bb.getLong();
     }
 
+    public static int toUnsigned(short s) {
+        return ((int) s) - Short.MIN_VALUE;
+    }
+
+    public static long toUnsigned(int i) {
+        return ((long) i) - Integer.MIN_VALUE;
+    }
 }
