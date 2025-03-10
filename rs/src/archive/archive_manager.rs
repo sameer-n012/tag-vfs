@@ -16,8 +16,8 @@ const INITIAL_FILE_STORAGE_SPACE_BYTES: usize = 1024 * 1024 * 1024; // 1 GB
 pub struct ArchiveManager {
     run_config: RunConfiguration,
     archive: Option<Archive>,
-    open_files: HashMap<u16, String>,
-    cache_file_names: HashMap<u16, String>,
+    open_files: HashMap<u16, NamedFile>, // maps fileno to file instance object
+    // cache_file_names: HashMap<u16, String>, // maps fileno to cache file name
     cache_file_loader: FileImporter,
 }
 
@@ -27,7 +27,7 @@ impl ArchiveManager {
             run_config: rc,
             archive: None,
             open_files: HashMap::new(),
-            cache_file_names: HashMap::new(),
+            // cache_file_names: HashMap::new(),
             cache_file_loader: FileImporter::new(rc.get_cache_path_absolute()),
         }
     }
