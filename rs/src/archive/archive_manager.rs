@@ -17,8 +17,8 @@ pub struct ArchiveManager {
     run_config: RunConfiguration,
     archive: Option<Archive>,
     open_files: HashMap<u16, NamedFile>, // maps fileno to file instance object
-    // cache_file_names: HashMap<u16, String>, // maps fileno to cache file name
-    cache_file_loader: FileImporter,
+                                         // cache_file_names: HashMap<u16, String>, // maps fileno to cache file name
+                                         // cache_file_loader: FileImporter,
 }
 
 impl ArchiveManager {
@@ -28,7 +28,7 @@ impl ArchiveManager {
             archive: None,
             open_files: HashMap::new(),
             // cache_file_names: HashMap::new(),
-            cache_file_loader: FileImporter::new(rc.get_cache_path_absolute()),
+            // cache_file_loader: FileImporter::new(rc.get_cache_path_absolute()),
         }
     }
 
@@ -50,6 +50,84 @@ impl ArchiveManager {
     pub fn read_archive_file(&mut self, path: String) -> io::Result<()> {
         self.archive = Archive::new(NamedFile::new(File::open(path.clone())?, path)).ok();
         return Ok(());
+    }
+
+    pub fn open(&mut self, filename: String) -> io::Result<()> {
+        self.cache(filename, true)?;
+        return Ok(());
+    }
+
+    pub fn cache(&mut self, filename: String, open: bool) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn flush(&self, filenames: Vec<String>, tags: Vec<String>) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn flush_all(&self) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn destroy(&self, filenames: Vec<String>, tags: Vec<String>) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn destroy_all(&self) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn remove(&self, filenames: Vec<String>, tags: Vec<String>) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn import_files(&self, paths: Vec<String>, recursive: bool) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn add_tags(&self, filenames: Vec<String>, tags: Vec<String>) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn remove_tags(&self, filenames: Vec<String>, tags: Vec<String>) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn list_files(&self, tags: Vec<String>) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn size_of(&self, tags: Vec<String>) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn apply(
+        &self,
+        filenames: Vec<String>,
+        tags: Vec<String>,
+        command: String,
+    ) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn scrape(&self, filenames: Vec<String>, tags: Vec<String>) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn merge(&self, path: String) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn expand_from(&self, destination: String, path: String) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn expand(&self, destination: String) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn reduce(&self, paths: Vec<String>, recursive: bool) -> io::Result<()> {
+        Ok(())
     }
 
     // Implement other methods here
