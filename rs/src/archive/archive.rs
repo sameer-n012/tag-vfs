@@ -28,7 +28,7 @@ const RESIZE_FACTOR: u8 = 2;
 pub struct Archive {
     fpath: String,
     file: File,
-    section_offset: Vec<u64>, // should be an array of length 5, with first value set to 0
+    section_offset: Vec<usize>, // should be an array of length 5, with first value set to 0
     head_l: RwLock<()>,
     fldr_l: RwLock<()>,
     tgdr_l: RwLock<()>,
@@ -44,8 +44,8 @@ pub struct Archive {
     num_tag_dir_slots: u16,
     num_tag_dir_slots_used: u16,
     // tgdr_mbb: Option<MappedByteBuffer>,
-    tag_lookup_section_size: u64, // includes metadata
-    tag_lookup_section_size_used: u64,
+    tag_lookup_section_size: u16, // includes metadata
+    tag_lookup_section_size_used: u16,
     num_tag_lookup_tuples: u16,
     // tglk_mbb: Option<MappedByteBuffer>,
     file_storage_section_size: u64,      // includes metadata
@@ -197,7 +197,7 @@ impl Archive {
             if (self.tag_lookup_section_size_used as f32
                 > self.tag_lookup_section_size as f32 * RESIZE_FILL_FACTOR_THRESHOLD)
             {
-                new_tag_lookup_section_size = self.tag_lookup_section_size * RESIZE_FACTOR as u64;
+                new_tag_lookup_section_size = self.tag_lookup_section_size * RESIZE_FACTOR as u16;
             }
             let mut new_file_storage_section_size = self.file_storage_section_size;
             if (self.file_storage_section_size_used as f32
@@ -217,7 +217,7 @@ impl Archive {
             offset +=
                 16 * 2 + tag_directory_entry::SIZE_BYTES as u64 * new_num_tag_dir_slots as u64;
             new_file.write(&offset.to_be_bytes()[2..8])?;
-            offset += 32 + 16 + new_tag_lookup_section_size;
+            offset += 32 + 16 + new_tag_lookup_section_size as u64;
             new_file.write(&offset.to_be_bytes()[2..8])?;
 
             const BUF_SIZE: usize = 1024 * 1024;
@@ -281,11 +281,11 @@ impl Archive {
                     break;
                 }
                 new_file.write(&byte_buf[0..bytes_read])?;
-                bytes_left -= bytes_read as u64;
+                bytes_left -= bytes_read as u16;
             }
             Archive::write_empty(
                 &mut new_file,
-                new_tag_lookup_section_size - self.tag_lookup_section_size,
+                (new_tag_lookup_section_size - self.tag_lookup_section_size) as u64,
             )?;
 
             // write section 3
@@ -354,7 +354,7 @@ impl Archive {
         self.head_l.write().unwrap();
 
         for i in 1..NUMBER_SECTIONS {
-            self.section_offset[i as usize] = u64::from_be_bytes(
+            self.section_offset[i as usize] = usize::from_be_bytes(
                 self.mmap[((i as usize - 1) * 6)..(i as usize * 6)]
                     .try_into()
                     .unwrap(),
@@ -417,7 +417,23 @@ impl Archive {
      *
      */
     fn read_s2_meta(&mut self) -> io::Result<()> {
-        Ok(())
+        self.tgdr_l.write().unwrap();
+
+        self.num_tag_dir_slots = u16::from_be_bytes(
+            self.mmap
+                [self.section_offset[TGDR_S as usize]..(self.section_offset[TGDR_S as usize] + 2)]
+                .try_into()
+                .unwrap(),
+        );
+
+        self.num_tag_dir_slots_used = u16::from_be_bytes(
+            self.mmap[self.section_offset[TGDR_S as usize] + 2
+                ..(self.section_offset[TGDR_S as usize] + 4)]
+                .try_into()
+                .unwrap(),
+        );
+
+        return Ok(());
     }
 
     /**
@@ -426,6 +442,45 @@ impl Archive {
      *
      */
     fn read_s3_meta(&mut self) -> io::Result<()> {
+        self.tglk_l.write().unwrap();
+
+        self.tag_lookup_section_size = u16::from_be_bytes(
+            self.mmap
+                [self.section_offset[TGLK_S as usize]..(self.section_offset[TGLK_S as usize] + 2)]
+                .try_into()
+                .unwrap(),
+        );
+
+        self.num_tag_lookup_tuples = u16::from_be_bytes(
+            self.mmap[self.section_offset[TGLK_S as usize] + 2
+                ..(self.section_offset[TGLK_S as usize] + 4)]
+                .try_into()
+                .unwrap(),
+        );
+
+        let mut bytes_read: usize = 0;
+        let mut tuples_found: u16 = 0;
+        let mut num_file_slots: u16 = 0;
+        let mut space_used: usize = 0;
+
+        while (bytes_read < self.tag_lookup_section_size as usize
+            && tuples_found < self.num_tag_lookup_tuples)
+        {
+            if (self.mmap[self.section_offset[TGLK_S as usize] + 4 + bytes_read] & 0x80 != 0) {
+                num_file_slots = u16::from_be_bytes(
+                    self.mmap[self.section_offset[TGLK_S as usize] + 4 + bytes_read + 1
+                        ..self.section_offset[TGLK_S as usize] + 4 + bytes_read + 3]
+                        .try_into()
+                        .unwrap(),
+                );
+                space_used += (2 + 1 + 2 + 2 * num_file_slots + 5) as usize;
+                bytes_read += (2 + 1 + 2 + 2 * num_file_slots + 5) as usize;
+                tuples_found += 1;
+            } else {
+                bytes_read += 2 + 1 + 2 + 2 * 0 + 5;
+            }
+        }
+
         Ok(())
     }
 
@@ -437,7 +492,7 @@ impl Archive {
     fn read_s4_meta(&mut self) -> io::Result<()> {
         self.flst_l.write().unwrap();
         self.file_storage_section_size =
-            self.mmap.len() as u64 - self.section_offset[FLST_S as usize];
+            (self.mmap.len() - self.section_offset[FLST_S as usize]) as u64;
 
         Ok(())
     }
