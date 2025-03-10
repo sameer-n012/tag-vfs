@@ -513,4 +513,76 @@ impl Archive {
         }
         Ok(())
     }
+
+    /**
+     * Creates an archive file by writing archive metadata to the file. The newly created archive
+     * will be empty except for the metadata.
+     *
+     * @param path the filepath to write to.
+     * @param file_dir_slots the number of file directory slots to create.
+     * @param tag_dir_slots the number of tag directory slots to create.
+     * @param tag_lookup_size the size of the tag lookup section created.
+     * @param file_storage_space the size of the file storage section created.
+     */
+    pub fn create(
+        path: String,
+        file_dir_slots: u16,
+        tag_dir_slots: u16,
+        tag_lookup_size: usize,
+        file_storage_space: usize,
+    ) -> io::Result<NamedFile> {
+        let mut file = File::create(&path).unwrap();
+
+        const BUF_SIZE: usize = 1024 * 1024;
+        let byte_buf: [u8; BUF_SIZE] = [0; BUF_SIZE];
+
+        // Write section 0
+        file.write(&MAGIC_NUMBER.to_be_bytes()[2..4])?;
+        let mut offset: u64 = 48 * 4 + 16;
+        file.write(&offset.to_be_bytes()[2..8])?;
+        offset += 16 * 2 + file_directory_entry::SIZE_BYTES as u64 * file_dir_slots as u64;
+        file.write(&offset.to_be_bytes()[2..8])?;
+        offset += 16 * 2 + tag_directory_entry::SIZE_BYTES as u64 * tag_dir_slots as u64;
+        file.write(&offset.to_be_bytes()[2..8])?;
+        offset += 32 + 16 + tag_lookup_size as u64;
+        file.write(&offset.to_be_bytes()[2..8])?;
+
+        // Write section 1
+        file.write(&file_dir_slots.to_be_bytes())?;
+        file.write(&0u16.to_be_bytes())?;
+        for _ in 0..file_dir_slots {
+            file.write(&byte_buf[0..file_directory_entry::SIZE_BYTES as usize])?;
+        }
+
+        // Write section 2
+        file.write(&tag_dir_slots.to_be_bytes())?;
+        file.write(&0u16.to_be_bytes())?;
+        for _ in 0..tag_dir_slots {
+            file.write(&byte_buf[0..tag_directory_entry::SIZE_BYTES as usize])?;
+        }
+
+        // Write section 3
+        file.write(&tag_lookup_size.to_be_bytes())?;
+        file.write(&0u16.to_be_bytes())?;
+        let mut bytes_left = tag_lookup_size as usize;
+        while bytes_left > 0 {
+            let bytes_written = file.write(&byte_buf[0..bytes_left.min(BUF_SIZE)])?;
+            bytes_left -= bytes_written;
+        }
+
+        // Write section 4
+        let file_length = file_storage_space
+            - file_metadata::MIN_SIZE_BYTES as usize
+            - file_end_metadata::SIZE_BYTES as usize;
+        file.write(&(file_length as u64).to_be_bytes())?;
+        let mut space_left = file_length as usize;
+        while space_left > 0 {
+            let bytes_written = file.write(&byte_buf[0..space_left.min(BUF_SIZE)])?;
+            space_left -= bytes_written;
+        }
+        file.write(&(file_length as u64).to_le_bytes())?;
+
+        file.flush();
+        return Ok(NamedFile::new(File::open(path.clone())?, path));
+    }
 }
