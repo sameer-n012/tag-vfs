@@ -20,3 +20,7 @@ cmake-build-*/
 # Eclipse
 .project
 .classpath
+.settings
+
+# Other
+.DS_Store
