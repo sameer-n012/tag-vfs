@@ -1,5 +1,6 @@
 use memmap2::{Mmap, MmapMut};
 use std::fs::{self, File};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
@@ -336,7 +337,7 @@ impl Archive {
      * @return true if the file is valid and false otherwise.
      */
     fn validate_file_type(&self) -> io::Result<bool> {
-        self.head_l.read().unwrap();
+        let lock = self.head_l.read().unwrap();
 
         if (u16::from_be_bytes(self.mmap[0..2].try_into().unwrap()) != MAGIC_NUMBER as u16) {
             return Ok(false);
@@ -351,7 +352,7 @@ impl Archive {
     fn read_section_pointers(&mut self) -> io::Result<()> {
         // Read section pointers
 
-        self.head_l.write().unwrap();
+        let lock = self.head_l.write().unwrap();
 
         for i in 1..NUMBER_SECTIONS {
             self.section_offset[i as usize] = usize::from_be_bytes(
@@ -370,7 +371,7 @@ impl Archive {
      *
      */
     fn read_s1_meta(&mut self) -> io::Result<()> {
-        self.fldr_l.write().unwrap();
+        let lock = self.fldr_l.write().unwrap();
 
         self.num_file_dir_slots = u16::from_be_bytes(
             self.mmap[self.section_offset[FLDR_S as usize] as usize
@@ -417,7 +418,7 @@ impl Archive {
      *
      */
     fn read_s2_meta(&mut self) -> io::Result<()> {
-        self.tgdr_l.write().unwrap();
+        let lock = self.tgdr_l.write().unwrap();
 
         self.num_tag_dir_slots = u16::from_be_bytes(
             self.mmap
@@ -442,7 +443,7 @@ impl Archive {
      *
      */
     fn read_s3_meta(&mut self) -> io::Result<()> {
-        self.tglk_l.write().unwrap();
+        let lock = self.tglk_l.write().unwrap();
 
         self.tag_lookup_section_size = u16::from_be_bytes(
             self.mmap
@@ -490,11 +491,87 @@ impl Archive {
      *
      */
     fn read_s4_meta(&mut self) -> io::Result<()> {
-        self.flst_l.write().unwrap();
+        let lock = self.flst_l.write().unwrap();
         self.file_storage_section_size =
             (self.mmap.len() - self.section_offset[FLST_S as usize]) as u64;
 
         Ok(())
+    }
+
+    /**
+     * Gets the corresponding file directory entry that matches
+     * the given file number.
+     *
+     * @param fileno the file number to search for.
+     * @return a file directory entry.
+     */
+    pub fn get_fde(&mut self, fileno: u16) -> io::Result<file_directory_entry::FileDirectoryEntry> {
+        let lock = self.fldr_l.read().unwrap();
+
+        let buf: [u8; file_directory_entry::SIZE_BYTES as usize] = self.mmap[self.section_offset
+            [FLDR_S as usize]
+            + 4
+            + fileno as usize * file_directory_entry::SIZE_BYTES as usize
+            ..self.section_offset[FLDR_S as usize]
+                + 4
+                + (fileno + 1) as usize * file_directory_entry::SIZE_BYTES as usize]
+            .try_into()
+            .unwrap();
+
+        return Ok(file_directory_entry::FileDirectoryEntry::from_bytes(
+            fileno, buf,
+        ));
+    }
+
+    /**
+     * Gets the corresponding list of file directory entries that match
+     * the given filename. Note that multiple files can have the same filename.
+     * Uses the filename hash to quickly match filenames before checking the file metadata.
+     *
+     * @param filename the filename to search for.
+     * @return an vector of file directory entries.
+     */
+    pub fn get_fde_from_filename(
+        &mut self,
+        filename: String,
+    ) -> io::Result<Vec<file_directory_entry::FileDirectoryEntry>> {
+        let lock = self.fldr_l.read().unwrap();
+
+        let filename_hash: u16 = Archive::hash_filename(filename);
+
+        let mut fdes: Vec<file_directory_entry::FileDirectoryEntry> = Vec::new();
+
+        let mut buf: [u8; file_directory_entry::SIZE_BYTES as usize];
+        for i in 0..self.num_file_dir_slots_used as usize {
+            buf = self.mmap[self.section_offset[FLDR_S as usize]
+                + 4
+                + i * file_directory_entry::SIZE_BYTES as usize
+                ..self.section_offset[FLDR_S as usize]
+                    + 4
+                    + (i + 1) * file_directory_entry::SIZE_BYTES as usize]
+                .try_into()
+                .unwrap();
+            let fde = file_directory_entry::FileDirectoryEntry::from_bytes(i as u16, buf);
+            if (fde.get_filename_hash() == filename_hash) {
+                fdes.push(file_directory_entry::FileDirectoryEntry::from_bytes(
+                    i as u16, buf,
+                ));
+            }
+        }
+
+        return Ok(fdes);
+    }
+
+    /**
+     * Hashes a filename to a 16-bit integer using the djb2 algorithm.
+     *
+     * @param filename the filename to hash
+     * @return the hash value
+     */
+    fn hash_filename(filename: String) -> u16 {
+        let mut hasher = DefaultHasher::new();
+        filename.hash(&mut hasher);
+        (hasher.finish() & 0xffff) as u16
     }
 
     /**
