@@ -4,7 +4,8 @@ use crate::archive::tag_lookup_entry;
 use crate::util::named_file::NamedFile;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{self};
+use std::sync::Arc;
 
 const INITIAL_FILE_DIR_SLOTS: u16 = 1024;
 const INITIAL_TAG_DIR_SLOTS: u16 = 256;
@@ -14,7 +15,7 @@ const INITIAL_TAG_LOOKUP_SPACE_BYTES: usize =
 const INITIAL_FILE_STORAGE_SPACE_BYTES: usize = 1024 * 1024 * 1024; // 1 GB
 
 pub struct ArchiveManager {
-    run_config: RunConfiguration,
+    run_config: Arc<RunConfiguration>,
     archive: Option<Archive>,
     open_files: HashMap<u16, NamedFile>, // maps fileno to file instance object
                                          // cache_file_names: HashMap<u16, String>, // maps fileno to cache file name
@@ -22,7 +23,7 @@ pub struct ArchiveManager {
 }
 
 impl ArchiveManager {
-    pub fn new(rc: RunConfiguration) -> Self {
+    pub fn new(rc: Arc<RunConfiguration>) -> Self {
         ArchiveManager {
             run_config: rc,
             archive: None,

@@ -1,7 +1,7 @@
 use crate::data::file_type::FileType;
 use std::collections::HashSet;
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 struct FileInstance {

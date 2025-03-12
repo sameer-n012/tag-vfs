@@ -2,17 +2,19 @@ use crate::app::run_configuration::RunConfiguration;
 use crate::archive::archive_manager::ArchiveManager;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 pub struct App {
-    pub config: RunConfiguration,
+    pub config: Arc<RunConfiguration>,
     am: ArchiveManager,
 }
 
 impl App {
     pub fn new(config: RunConfiguration) -> Self {
+        let config = Arc::new(config);
         let mut app = App {
-            config,
-            am: ArchiveManager::new(config),
+            config: Arc::clone(&config),
+            am: ArchiveManager::new(Arc::clone(&config)),
         };
         app.initialize_app();
         app

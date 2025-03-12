@@ -460,11 +460,11 @@ impl Archive {
 
         let mut bytes_read: usize = 0;
         let mut tuples_found: u16 = 0;
-        let mut num_file_slots: u16 = 0;
+        let mut num_file_slots: u16;
         let mut space_used: usize = 0;
 
-        while (bytes_read < self.tag_lookup_section_size as usize
-            && tuples_found < self.num_tag_lookup_tuples)
+        while bytes_read < self.tag_lookup_section_size as usize
+            && tuples_found < self.num_tag_lookup_tuples
         {
             if (self.mmap[self.section_offset[TGLK_S as usize] + 4 + bytes_read] & 0x80 != 0) {
                 num_file_slots = u16::from_be_bytes(
@@ -580,9 +580,9 @@ impl Archive {
             let bytes_written = file.write(&byte_buf[0..space_left.min(BUF_SIZE)])?;
             space_left -= bytes_written;
         }
-        file.write(&(file_length as u64).to_le_bytes())?;
+        file.write(&(file_length as u64).to_be_bytes())?;
 
-        file.flush();
+        file.flush()?;
         return Ok(NamedFile::new(File::open(path.clone())?, path));
     }
 }

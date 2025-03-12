@@ -1,5 +1,4 @@
 use std::fs::File;
-use std::io::{self, Read, Write};
 
 pub struct NamedFile {
     pub path: String,

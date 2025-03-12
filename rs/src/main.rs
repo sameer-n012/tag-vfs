@@ -1,3 +1,5 @@
+#![allow(unused_variables, unused_parens)]
+
 mod app;
 mod archive;
 mod data;
