@@ -106,4 +106,8 @@ impl FileMetadata {
     pub fn as_bytes(&self) -> Vec<u8> {
         self.fm.clone()
     }
+
+    pub fn size_bytes(&self) -> usize {
+        self.fm.len() * 2
+    }
 }

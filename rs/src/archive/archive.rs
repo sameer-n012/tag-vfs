@@ -531,7 +531,7 @@ impl Archive {
      * @param filename the filename to search for.
      * @return an vector of file directory entries.
      */
-    pub fn get_fde_from_filename(
+    pub fn get_fde_by_filename(
         &mut self,
         filename: String,
     ) -> io::Result<Vec<file_directory_entry::FileDirectoryEntry>> {
@@ -542,7 +542,7 @@ impl Archive {
         let mut fdes: Vec<file_directory_entry::FileDirectoryEntry> = Vec::new();
 
         let mut buf: [u8; file_directory_entry::SIZE_BYTES as usize];
-        for i in 0..self.num_file_dir_slots_used as usize {
+        for i in 0..self.num_file_dir_slots as usize {
             buf = self.mmap[self.section_offset[FLDR_S as usize]
                 + 4
                 + i * file_directory_entry::SIZE_BYTES as usize
@@ -552,7 +552,7 @@ impl Archive {
                 .try_into()
                 .unwrap();
             let fde = file_directory_entry::FileDirectoryEntry::from_bytes(i as u16, buf);
-            if (fde.get_filename_hash() == filename_hash) {
+            if (fde.is_valid() && fde.get_filename_hash() == filename_hash) {
                 fdes.push(file_directory_entry::FileDirectoryEntry::from_bytes(
                     i as u16, buf,
                 ));
@@ -560,6 +560,96 @@ impl Archive {
         }
 
         return Ok(fdes);
+    }
+
+    /**
+     * Searches for a valid tag directory entry with a tag that matches the tag
+     * number given.
+     *
+     * @param tag the name of the tag to search for.
+     * @return the tag directory entry found.
+     */
+    pub fn get_tde(&self, tagno: u16) -> io::Result<tag_directory_entry::TagDirectoryEntry> {
+        let lock = self.tgdr_l.read().unwrap();
+
+        let buf: [u8; tag_directory_entry::SIZE_BYTES as usize] = self.mmap[self.section_offset
+            [TGDR_S as usize]
+            + 4
+            + tagno as usize * tag_directory_entry::SIZE_BYTES as usize
+            ..self.section_offset[TGDR_S as usize]
+                + 4
+                + (tagno + 1) as usize * tag_directory_entry::SIZE_BYTES as usize]
+            .try_into()
+            .unwrap();
+
+        return Ok(tag_directory_entry::TagDirectoryEntry::from_bytes(
+            tagno, buf,
+        ));
+    }
+
+    /**
+     * Searches for a valid tag directory entry with a tag that matches the name
+     * given. Note that tag names are unique.
+     *
+     * @param tag the name of the tag to search for.
+     * @return the tag directory entry found, or none if none are found
+     */
+    pub fn get_tde_from_tagname(
+        &self,
+        tagname: String,
+    ) -> io::Result<Option<tag_directory_entry::TagDirectoryEntry>> {
+        let lock = self.tgdr_l.read().unwrap();
+
+        let mut buf: [u8; tag_directory_entry::SIZE_BYTES as usize];
+        for i in 0..self.num_tag_dir_slots as usize {
+            buf = self.mmap[self.section_offset[FLDR_S as usize]
+                + 4
+                + i * file_directory_entry::SIZE_BYTES as usize
+                ..self.section_offset[FLDR_S as usize]
+                    + 4
+                    + (i + 1) * file_directory_entry::SIZE_BYTES as usize]
+                .try_into()
+                .unwrap();
+
+            let tde = tag_directory_entry::TagDirectoryEntry::from_bytes(i as u16, buf);
+
+            if (tde.is_valid() && tde.get_name() == tagname) {
+                return Ok(Some(tde));
+            }
+        }
+
+        return Ok(None);
+    }
+
+    /**
+     * Gets the file metadata located at a specific offset.
+     *
+     * @param offset the offset into the file storage section where the metadata is located.
+     * @return the file metadata.
+     */
+    pub fn get_fm(&self, offset: u64) -> io::Result<file_metadata::FileMetadata> {
+        let mut buf: Vec<u8> = self.mmap[self.section_offset[FLST_S as usize] + offset as usize
+            ..self.section_offset[FLST_S as usize]
+                + offset as usize
+                + file_metadata::MIN_SIZE_BYTES as usize]
+            .to_vec();
+
+        let name_len = buf[10] as usize;
+        let num_tags = u16::from_be_bytes(buf[11..13].try_into().unwrap()) as usize;
+
+        buf.extend_from_slice(
+            &self.mmap[self.section_offset[FLST_S as usize]
+                + offset as usize
+                + file_metadata::MIN_SIZE_BYTES as usize
+                ..self.section_offset[FLST_S as usize]
+                    + offset as usize
+                    + file_metadata::MIN_SIZE_BYTES as usize
+                    + name_len
+                    + num_tags * 2]
+                .to_vec(),
+        );
+
+        return Ok(file_metadata::FileMetadata::from_bytes(buf));
     }
 
     /**

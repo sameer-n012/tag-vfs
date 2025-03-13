@@ -77,4 +77,8 @@ impl TagLookupEntry {
     pub fn as_bytes(&self) -> Vec<u8> {
         self.tle.clone()
     }
+
+    pub fn size_bytes(&self) -> usize {
+        self.tle.len() * 2
+    }
 }
