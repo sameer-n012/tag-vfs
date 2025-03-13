@@ -653,6 +653,108 @@ impl Archive {
     }
 
     /**
+     * Creates the file directory entry in the file directory entry section. Will attempt to resize
+     * the archive if there is no space, and if unable to do so, will not create the entry.
+     *
+     * @param length the length of the file.
+     * @param parent the file number of the parent of the file (-1 if parent is root).
+     * @param filename the name of the file.
+     * @param offset the offset into the file storage section at which the file (and its metadata) is
+     *               located in the file storage section.
+     * @return the new file directory entry, or null if none was able to be created.
+     */
+    pub fn make_fde(
+        &mut self,
+        length: u64,
+        parent: u16,
+        filename: String,
+        offset: u64,
+    ) -> io::Result<file_directory_entry::FileDirectoryEntry> {
+        let mut need_resize: bool = false;
+        {
+            let lock = self.fldr_l.read().unwrap();
+
+            // all slots are currently filled
+            if (self.num_file_dir_slots_used == self.num_file_dir_slots) {
+                if (self.num_file_dir_slots == u16::MAX) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        "Maximum number of file directory slots reached",
+                    ));
+                } else {
+                    need_resize = true;
+                }
+            }
+        }
+        if need_resize {
+            self.resize_archive()?;
+        }
+
+        let lock = self.fldr_l.write().unwrap();
+
+        let filename_hash: u16 = Archive::hash_filename(filename);
+
+        self.num_file_dir_slots_used += 1;
+
+        let mut buf: [u8; file_directory_entry::SIZE_BYTES as usize];
+        for i in 0..self.num_file_dir_slots {
+            buf = self.mmap[self.section_offset[FLDR_S as usize]
+                + 4
+                + i as usize * file_directory_entry::SIZE_BYTES as usize
+                ..self.section_offset[FLDR_S as usize]
+                    + 4
+                    + (i + 1) as usize * file_directory_entry::SIZE_BYTES as usize]
+                .try_into()
+                .unwrap();
+
+            if (!file_directory_entry::FileDirectoryEntry::from_bytes(i, buf).is_valid()) {
+                let fde = file_directory_entry::FileDirectoryEntry::new(
+                    i,
+                    length,
+                    true,
+                    parent,
+                    filename_hash,
+                    offset,
+                );
+
+                self.mmap_mut[self.section_offset[FLDR_S as usize]
+                    + 4
+                    + i as usize * file_directory_entry::SIZE_BYTES as usize
+                    ..self.section_offset[FLDR_S as usize]
+                        + 4
+                        + (i + 1) as usize * file_directory_entry::SIZE_BYTES as usize]
+                    .copy_from_slice(&fde.as_bytes());
+
+                return Ok(fde);
+            }
+        }
+
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "No empty file directory slots found",
+        ));
+    }
+
+    /**
+     * Creates the file directory entry in the file directory entry section. Will attempt to resize
+     * the archive if there is no space, and if unable to do so, will not create the entry.
+     *
+     * @param length the length of the file.
+     * @param parent the file number of the parent of the file (-1 if parent is root).
+     * @param filename the name of the file.
+     * @param offset the offset into the file storage section at which the file (and its metadata) is
+     *               located in the file storage section.
+     * @return the new file directory entry, or null if none was able to be created.
+     */
+    pub fn delete_fde(
+        &mut self,
+        fileno: u16,
+    ) -> io::Result<file_directory_entry::FileDirectoryEntry> {
+        // TODO
+        return Err(io::Error::new(io::ErrorKind::Other, "Not implemented"));
+    }
+
+    /**
      * Hashes a filename to a 16-bit integer using the djb2 algorithm.
      *
      * @param filename the filename to hash
