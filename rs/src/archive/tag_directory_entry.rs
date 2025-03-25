@@ -1,4 +1,5 @@
 pub const SIZE_BYTES: u8 = 184 / 8;
+pub const MAX_TAG_NAME_LENGTH: usize = 16;
 
 pub struct TagDirectoryEntry {
     tagno: u16,

@@ -5,8 +5,12 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
-use crate::archive::{file_directory_entry, file_end_metadata, file_metadata, tag_directory_entry};
+use crate::archive::{
+    file_directory_entry, file_end_metadata, file_metadata, tag_directory_entry, tag_lookup_entry,
+};
 use crate::util::named_file::NamedFile;
+
+use super::tag_lookup_entry::BASE_SIZE_BYTES;
 
 // Constants
 const MAGIC_NUMBER: i32 = 13579;
@@ -90,18 +94,18 @@ impl Archive {
             file_storage_section_size_used: 0,
         };
 
-        if !a.validate_file_type()? {
+        if !a._validate_file_type()? {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "File is not a valid archive file",
             ));
         }
 
-        a.read_section_pointers()?;
-        a.read_s1_meta()?;
-        a.read_s2_meta()?;
-        a.read_s3_meta()?;
-        a.read_s4_meta()?;
+        a._read_section_pointers()?;
+        a._read_s1_meta()?;
+        a._read_s2_meta()?;
+        a._read_s3_meta()?;
+        a._read_s4_meta()?;
 
         return Ok(a);
     }
@@ -112,7 +116,7 @@ impl Archive {
      *
      * @return the backup file.
      */
-    fn backup_archive(&mut self) -> io::Result<()> {
+    fn _backup_archive(&mut self) -> io::Result<()> {
         let l1 = self.head_l.read().unwrap();
         let l2 = self.fldr_l.read().unwrap();
         let l3 = self.tgdr_l.read().unwrap();
@@ -156,7 +160,7 @@ impl Archive {
      * before the temporary file is renamed to the original file.
      *
      */
-    fn resize_archive(&mut self) -> io::Result<()> {
+    fn _resize_archive(&mut self) -> io::Result<()> {
         {
             let l1 = self.head_l.write().unwrap();
             let l2 = self.fldr_l.write().unwrap();
@@ -322,11 +326,11 @@ impl Archive {
             self.file = File::open(&self.fpath)?;
         }
 
-        self.read_section_pointers()?;
-        self.read_s1_meta()?;
-        self.read_s2_meta()?;
-        self.read_s3_meta()?;
-        self.read_s4_meta()?;
+        self._read_section_pointers()?;
+        self._read_s1_meta()?;
+        self._read_s2_meta()?;
+        self._read_s3_meta()?;
+        self._read_s4_meta()?;
 
         Ok(())
     }
@@ -336,7 +340,7 @@ impl Archive {
      *
      * @return true if the file is valid and false otherwise.
      */
-    fn validate_file_type(&self) -> io::Result<bool> {
+    fn _validate_file_type(&self) -> io::Result<bool> {
         let lock = self.head_l.read().unwrap();
 
         if (u16::from_be_bytes(self.mmap[0..2].try_into().unwrap()) != MAGIC_NUMBER as u16) {
@@ -349,7 +353,7 @@ impl Archive {
      * Reads the pointers to each section found in the archive header.
      *
      */
-    fn read_section_pointers(&mut self) -> io::Result<()> {
+    fn _read_section_pointers(&mut self) -> io::Result<()> {
         // Read section pointers
 
         let lock = self.head_l.write().unwrap();
@@ -370,7 +374,7 @@ impl Archive {
      * current storage section fill, total slots, and slots used.
      *
      */
-    fn read_s1_meta(&mut self) -> io::Result<()> {
+    fn _read_s1_meta(&mut self) -> io::Result<()> {
         let lock = self.fldr_l.write().unwrap();
 
         self.num_file_dir_slots = u16::from_be_bytes(
@@ -417,7 +421,7 @@ impl Archive {
      * total slots and slots used.
      *
      */
-    fn read_s2_meta(&mut self) -> io::Result<()> {
+    fn _read_s2_meta(&mut self) -> io::Result<()> {
         let lock = self.tgdr_l.write().unwrap();
 
         self.num_tag_dir_slots = u16::from_be_bytes(
@@ -442,7 +446,7 @@ impl Archive {
      * total section size, space used, and number of lookup tuples.
      *
      */
-    fn read_s3_meta(&mut self) -> io::Result<()> {
+    fn _read_s3_meta(&mut self) -> io::Result<()> {
         let lock = self.tglk_l.write().unwrap();
 
         self.tag_lookup_section_size = u16::from_be_bytes(
@@ -490,7 +494,7 @@ impl Archive {
      * total section size.
      *
      */
-    fn read_s4_meta(&mut self) -> io::Result<()> {
+    fn _read_s4_meta(&mut self) -> io::Result<()> {
         let lock = self.flst_l.write().unwrap();
         self.file_storage_section_size =
             (self.mmap.len() - self.section_offset[FLST_S as usize]) as u64;
@@ -663,7 +667,7 @@ impl Archive {
      *               located in the file storage section.
      * @return the new file directory entry, or null if none was able to be created.
      */
-    pub fn make_fde(
+    fn _make_fde(
         &mut self,
         length: u64,
         parent: u16,
@@ -687,14 +691,12 @@ impl Archive {
             }
         }
         if need_resize {
-            self.resize_archive()?;
+            self._resize_archive()?;
         }
 
         let lock = self.fldr_l.write().unwrap();
 
         let filename_hash: u16 = Archive::hash_filename(filename);
-
-        self.num_file_dir_slots_used += 1;
 
         let mut buf: [u8; file_directory_entry::SIZE_BYTES as usize];
         for i in 0..self.num_file_dir_slots {
@@ -725,6 +727,8 @@ impl Archive {
                         + (i + 1) as usize * file_directory_entry::SIZE_BYTES as usize]
                     .copy_from_slice(&fde.as_bytes());
 
+                self.num_file_dir_slots_used += 1;
+
                 return Ok(fde);
             }
         }
@@ -736,20 +740,324 @@ impl Archive {
     }
 
     /**
-     * Creates the file directory entry in the file directory entry section. Will attempt to resize
+     * Deletes the file directory entry in the file directory entry section by zeroing all bits.
+     * Does not delete the file metadata/data, tag data, or move around the file directory entries.
+     * The file data and tag data should be fixed before running this, otherwise there will be
+     * inconsistencies in the archive.
+     *
+     * @param fileno the file number to delete.
+     */
+    fn _delete_fde(&mut self, fileno: u16) -> io::Result<()> {
+        let l = self.fldr_l.write().unwrap();
+
+        let buf: [u8; file_directory_entry::SIZE_BYTES as usize] =
+            [0; file_directory_entry::SIZE_BYTES as usize];
+
+        self.mmap_mut[self.section_offset[FLDR_S as usize]
+            + 4
+            + fileno as usize * file_directory_entry::SIZE_BYTES as usize
+            ..self.section_offset[FLDR_S as usize]
+                + 4
+                + (fileno + 1) as usize * file_directory_entry::SIZE_BYTES as usize]
+            .copy_from_slice(&buf);
+
+        self.num_file_dir_slots_used -= 1;
+
+        return Ok(());
+    }
+
+    /**
+     * Creates the tag directory entry in the tag directory entry section. Will attempt to resize
      * the archive if there is no space, and if unable to do so, will not create the entry.
      *
-     * @param length the length of the file.
-     * @param parent the file number of the parent of the file (-1 if parent is root).
-     * @param filename the name of the file.
-     * @param offset the offset into the file storage section at which the file (and its metadata) is
-     *               located in the file storage section.
+     * @param tagname the name of the tag.
+     * @param offset the offset into the tag lookup storage section at which the first tag lookup
+     *               tuple is located.
      * @return the new file directory entry, or null if none was able to be created.
      */
-    pub fn delete_fde(
+    fn _make_tde(
         &mut self,
+        tagname: String,
+        offset: u64,
+    ) -> io::Result<tag_directory_entry::TagDirectoryEntry> {
+        if tagname.len() > tag_directory_entry::MAX_TAG_NAME_LENGTH {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Tag name is too long",
+            ));
+        }
+
+        let mut need_resize: bool = false;
+        {
+            let lock = self.tgdr_l.read().unwrap();
+
+            // all slots are currently filled
+            if (self.num_tag_dir_slots_used == self.num_tag_dir_slots) {
+                if (self.num_tag_dir_slots == u16::MAX) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        "Maximum number of tag directory slots reached",
+                    ));
+                } else {
+                    need_resize = true;
+                }
+            }
+        }
+        if need_resize {
+            self._resize_archive()?;
+        }
+
+        let lock = self.tgdr_l.write().unwrap();
+
+        let mut buf: [u8; tag_directory_entry::SIZE_BYTES as usize];
+        for i in 0..self.num_tag_dir_slots {
+            buf = self.mmap[self.section_offset[TGDR_S as usize]
+                + 4
+                + i as usize * tag_directory_entry::SIZE_BYTES as usize
+                ..self.section_offset[TGDR_S as usize]
+                    + 4
+                    + (i + 1) as usize * tag_directory_entry::SIZE_BYTES as usize]
+                .try_into()
+                .unwrap();
+
+            if (!tag_directory_entry::TagDirectoryEntry::from_bytes(i, buf).is_valid()) {
+                let tde =
+                    tag_directory_entry::TagDirectoryEntry::new(i, true, tagname.as_str(), offset);
+
+                self.mmap_mut[self.section_offset[TGDR_S as usize]
+                    + 4
+                    + i as usize * tag_directory_entry::SIZE_BYTES as usize
+                    ..self.section_offset[TGDR_S as usize]
+                        + 4
+                        + (i + 1) as usize * tag_directory_entry::SIZE_BYTES as usize]
+                    .copy_from_slice(&tde.as_bytes());
+
+                self.num_tag_dir_slots_used += 1;
+
+                return Ok(tde);
+            }
+        }
+
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "No empty tag directory slots found",
+        ));
+    }
+
+    /**
+     * Deletes the tag directory entry in the tag directory entry section by zeroing all bits.
+     * Does not delete the file metadata/data, tag lookup data, or move around the tag directory entries.
+     * The tag lookup data should be fixed before running this, otherwise there will be
+     * inconsistencies in the archive.
+     *
+     * @param tagno the tag number to delete.
+     */
+    fn _delete_tde(&mut self, tagno: u16) -> io::Result<()> {
+        let l = self.tgdr_l.write().unwrap();
+
+        let buf: [u8; tag_directory_entry::SIZE_BYTES as usize] =
+            [0; tag_directory_entry::SIZE_BYTES as usize];
+
+        self.mmap_mut[self.section_offset[TGDR_S as usize]
+            + 4
+            + tagno as usize * tag_directory_entry::SIZE_BYTES as usize
+            ..self.section_offset[TGDR_S as usize]
+                + 4
+                + (tagno + 1) as usize * tag_directory_entry::SIZE_BYTES as usize]
+            .copy_from_slice(&buf);
+
+        self.num_tag_dir_slots_used -= 1;
+
+        return Ok(());
+    }
+
+    /**
+     * Creates the tag lookup entry in the tag lookup entry section. Assumes that this
+     * is the last tag lookup tuple for the given tag, so no next offset is needed.
+     * The lookup tuple should have 15, 31, 63, ... file slots. Updates any
+     * previous tag lookup tuple to point to this one.
+     *
+     * @param tagno the tag number of the tag corresponding to the tag directory entry.
+     * @param filenos the file numbers of the files with the tag.
+     * @return the new tag lookup entry, or null if none was able to be created.
+     */
+    fn _make_tle(
+        &mut self,
+        tagno: u16,
+        filenos: Vec<u16>,
+    ) -> io::Result<tag_lookup_entry::TagLookupEntry> {
+        let num_file_slots = (filenos.len() + 1).next_power_of_two() as u16;
+
+        let mut need_resize: bool = false;
+        let mut offset: u64;
+        let mut prev_exists: bool = false;
+        let mut prev_offset: u64 = 0;
+        let mut prev_num_file_slots: u16 = 7;
+        {
+            let lock = self.tglk_l.read().unwrap();
+
+            // loop through total section based on size of tag lookup section
+            // to find space
+            let mut bytes_read: usize = 0;
+            while bytes_read + tag_lookup_entry::BASE_SIZE_BYTES
+                < self.tag_lookup_section_size as usize
+            {
+                let buf = self.mmap[self.section_offset[TGLK_S as usize] + 4 + bytes_read
+                    ..self.section_offset[TGLK_S as usize]
+                        + 4
+                        + bytes_read
+                        + tag_lookup_entry::BASE_SIZE_BYTES]
+                    .try_into()
+                    .unwrap();
+
+                let tle = tag_lookup_entry::TagLookupEntry::from_bytes(buf);
+
+                if tle.is_valid() && tle.tagno() == tagno {
+                    prev_exists = true;
+                    prev_offset = bytes_read as u64;
+                    prev_num_file_slots = tle.get_num_file_slots();
+                }
+
+                if !tle.is_valid() && tle.get_num_file_slots() >= num_file_slots {
+                    offset = bytes_read as u64;
+                    need_resize = false;
+                    break;
+                }
+
+                bytes_read += BASE_SIZE_BYTES + tle.get_num_file_slots() as usize * 2;
+            }
+
+            need_resize = true;
+            offset = 0;
+        }
+        if need_resize {
+            self._resize_archive()?;
+            {
+                let lock = self.tglk_l.read().unwrap();
+
+                // loop through total section based on size of tag lookup section
+                // to find space
+                let mut bytes_read: usize = 0;
+                while bytes_read + tag_lookup_entry::BASE_SIZE_BYTES
+                    < self.tag_lookup_section_size as usize
+                {
+                    let buf = self.mmap[self.section_offset[TGLK_S as usize] + 4 + bytes_read
+                        ..self.section_offset[TGLK_S as usize]
+                            + 4
+                            + bytes_read
+                            + tag_lookup_entry::BASE_SIZE_BYTES]
+                        .try_into()
+                        .unwrap();
+
+                    let tle = tag_lookup_entry::TagLookupEntry::from_bytes(buf);
+
+                    if tle.is_valid() && tle.tagno() == tagno && !tle.is_offset_valid() {
+                        prev_exists = true;
+                        prev_offset = bytes_read as u64;
+                        prev_num_file_slots = tle.get_num_file_slots();
+                    }
+
+                    if !tle.is_valid() && tle.get_num_file_slots() >= num_file_slots {
+                        offset = bytes_read as u64;
+                        need_resize = false;
+                        break;
+                    }
+
+                    bytes_read += BASE_SIZE_BYTES + tle.get_num_file_slots() as usize * 2;
+                }
+
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "No tag lookup entry space found",
+                ));
+            }
+        }
+
+        let lock = self.tglk_l.write().unwrap();
+
+        let buf: Vec<u8> = Vec::with_capacity(
+            tag_lookup_entry::TagLookupEntry::calculate_needed_size(num_file_slots),
+        );
+
+        let new_num_file_slots = prev_num_file_slots * 2 + 1;
+        let tle = tag_lookup_entry::TagLookupEntry::new(
+            tagno,
+            true,
+            new_num_file_slots,
+            filenos.len() as u16,
+            filenos,
+            0,
+            false,
+        );
+
+        // write new tle
+        self.mmap_mut[self.section_offset[TGLK_S as usize] + 4 + offset as usize
+            ..self.section_offset[TGLK_S as usize] + 4 + offset as usize + tle.size_bytes()]
+            .copy_from_slice(&tle.as_bytes());
+
+        // update previous tle's next offset
+        if prev_exists {
+            let mut buf: [u8; 5] = [0; 5];
+            buf.copy_from_slice(&offset.to_be_bytes()[3..]);
+            self.mmap_mut[self.section_offset[TGLK_S as usize] + 4 + prev_offset as usize + 6
+                ..self.section_offset[TGLK_S as usize] + 4 + prev_offset as usize + 11]
+                .copy_from_slice(&buf);
+        }
+
+        return Ok(tle);
+    }
+
+    /**
+     * Deletes the tag lookup entry in the tag lookup entry section by zeroing the valid bit.
+     * Does not delete or modify any of the previous tag lookup tuples. Does not coalesce
+     * the tag lookup section.
+     *
+     * @param offset num_file_slots the number of file slots in the lookup tuple.
+     * @return the new file directory entry, or null if none was able to be created.
+     */
+    fn _delete_tle(&mut self, offset: u16) -> io::Result<()> {
+        let lock = self.tglk_l.write().unwrap();
+
+        let mut buf: [u8; 2] = self.mmap[self.section_offset[TGLK_S as usize] + 4 + offset as usize
+            ..self.section_offset[TGLK_S as usize] + 4 + offset as usize + 2]
+            .try_into()
+            .unwrap();
+        buf[1] = buf[1] & 0x6;
+
+        // write new empty section
+        self.mmap_mut[self.section_offset[TGLK_S as usize] + 4 + offset as usize
+            ..self.section_offset[TGLK_S as usize] + 4 + offset as usize + 2]
+            .copy_from_slice(&buf);
+
+        return Ok(());
+    }
+
+    fn find_file_space(&mut self, length: u64, metadata_length: u64) -> io::Result<u64> {
+        // TODO
+        return Err(io::Error::new(io::ErrorKind::Other, "Not implemented"));
+    }
+
+    /**
+     * Creates space for a file at a given offset by writing the file metaadta and file end-metadata.
+     *
+     * @param offset the offset into the file storage section indicating the beginning of the file metadata.
+     * @param length the length of the file.
+     * @param fileno the file number.
+     * @param parent the parent of the file (-1 if the parent is root).
+     * @param type the type of file.
+     * @param filename the name of the file.
+     * @param tags a list of tag IDs for the file
+     * @return the file metadata created.
+     */
+    fn allocate_file_space(
+        &mut self,
+        offset: u64,
+        length: u64,
         fileno: u16,
-    ) -> io::Result<file_directory_entry::FileDirectoryEntry> {
+        parent: u16,
+        filename: String,
+        tags: Vec<u16>,
+    ) -> io::Result<file_metadata::FileMetadata> {
         // TODO
         return Err(io::Error::new(io::ErrorKind::Other, "Not implemented"));
     }

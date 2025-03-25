@@ -1,4 +1,6 @@
-pub const MIN_SIZE_BYTES: usize = (80 + 16 * 16) / 8;
+pub const MIN_NUM_FILE_SLOTS: usize = 15;
+pub const MIN_SIZE_BYTES: usize = BASE_SIZE_BYTES + (MIN_NUM_FILE_SLOTS * 16) / 8;
+pub const BASE_SIZE_BYTES: usize = 88 / 8;
 
 pub struct TagLookupEntry {
     tagno: u16,
@@ -6,7 +8,8 @@ pub struct TagLookupEntry {
 }
 
 impl TagLookupEntry {
-    pub fn from_bytes(tagno: u16, tle: Vec<u8>) -> Self {
+    pub fn from_bytes(tle: Vec<u8>) -> Self {
+        let tagno: u16 = u16::from_be_bytes(tle.get(0..2).unwrap().try_into().unwrap()) >> 1;
         TagLookupEntry { tagno, tle }
     }
 
@@ -79,6 +82,10 @@ impl TagLookupEntry {
     }
 
     pub fn size_bytes(&self) -> usize {
-        self.tle.len() * 2
+        self.tle.len()
+    }
+
+    pub fn calculate_needed_size(num_file_slots: u16) -> usize {
+        MIN_SIZE_BYTES + (num_file_slots as usize) * 2
     }
 }
