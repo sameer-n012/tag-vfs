@@ -76,14 +76,14 @@ Sub-points indicate optional arguments
 
 - first value is 16-bit unsigned integer representing the size of the section in bytes
 - second value is 16-bit unsigned integer representing number of tuples in section
-- list of (80+16k)-bit tuples `(i, v, s, n, o, f1, f2, ...)`
+- list of (88+16k)-bit tuples `(i, v, s, n, o, f1, f2, ...)`
   - `v` is a valid bit, 1 if the tuple is valid
   - `i` is a 15-bit unsigned byte identifying the tag (corresponding to section 2)
-  - `s` is an 8-bit number representing the number of file slots in the tuple
+  - `s` is an 16-bit number representing the number of file slots in the tuple
   - `n` is a 16-bit unsigned short representing the number of files with the given tag
     - `n` should represent valid `f` entries in this tuple alone, plus 1 if the next pointer is valid
   - `f` is a 16-bit unsigned short representing the index of a file with the tag
-    - first tuples for tags have 16 file pointers, then 32, ...
+    - first tuples for tags have 15 file pointers, then 31, then 63, ...
   - `o` is a 40-bit offset from the start of this section to the next tuple for this tag
 
 ### Fourth Section - File Storage
@@ -97,7 +97,7 @@ Sub-points indicate optional arguments
   - `y` is a 8-bit number representing the file type
   - `nn` is the 8-bit number representing the length of the file name
   - `tn` is a 16-bit unsigned short representing the number of tags corresponding to the file
-  - `ti` is the 15-bit unsigned short identifying the tag
+  - `ti` is the 16-bit unsigned short identifying the tag
   - `n` is the `nn` byte length string representing the name of the file
 - data is arbitrary length
 - end-metadata is 40-bit unsigned integer representing length of data

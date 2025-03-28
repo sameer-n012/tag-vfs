@@ -10,6 +10,7 @@ use crate::archive::{
 };
 use crate::util::named_file::NamedFile;
 
+use super::file_metadata::FileMetadata;
 use super::tag_lookup_entry::BASE_SIZE_BYTES;
 
 // Constants
@@ -231,7 +232,7 @@ impl Archive {
 
             // write section 1
             new_file.write(&new_num_file_dir_slots.to_be_bytes())?;
-            self.file.seek(SeekFrom::Current(2));
+            self.file.seek(SeekFrom::Current(2))?;
             let mut bytes_left =
                 self.num_file_dir_slots * file_directory_entry::SIZE_BYTES as u16 + 2;
             loop {
@@ -245,7 +246,7 @@ impl Archive {
                 new_file.write(&byte_buf[0..bytes_read])?;
                 bytes_left -= bytes_read as u16;
             }
-            Archive::write_empty(
+            Archive::_write_empty(
                 &mut new_file,
                 (new_num_file_dir_slots - self.num_file_dir_slots) as u64
                     * file_directory_entry::SIZE_BYTES as u64,
@@ -253,7 +254,7 @@ impl Archive {
 
             // write section 2
             new_file.write(&new_num_tag_dir_slots.to_be_bytes())?;
-            self.file.seek(SeekFrom::Current(2));
+            self.file.seek(SeekFrom::Current(2))?;
             let mut bytes_left =
                 self.num_tag_dir_slots * tag_directory_entry::SIZE_BYTES as u16 + 2;
             loop {
@@ -267,7 +268,7 @@ impl Archive {
                 new_file.write(&byte_buf[0..bytes_read])?;
                 bytes_left -= bytes_read as u16;
             }
-            Archive::write_empty(
+            Archive::_write_empty(
                 &mut new_file,
                 (new_num_tag_dir_slots - self.num_tag_dir_slots) as u64
                     * tag_directory_entry::SIZE_BYTES as u64,
@@ -275,7 +276,7 @@ impl Archive {
 
             // write section 3
             new_file.write(&new_tag_lookup_section_size.to_be_bytes())?;
-            self.file.seek(SeekFrom::Current(8));
+            self.file.seek(SeekFrom::Current(8))?;
             let mut bytes_left = self.tag_lookup_section_size + 8;
             loop {
                 bytes_read = self
@@ -288,7 +289,7 @@ impl Archive {
                 new_file.write(&byte_buf[0..bytes_read])?;
                 bytes_left -= bytes_read as u16;
             }
-            Archive::write_empty(
+            Archive::_write_empty(
                 &mut new_file,
                 (new_tag_lookup_section_size - self.tag_lookup_section_size) as u64,
             )?;
@@ -314,7 +315,7 @@ impl Archive {
             // FileMetadata fm = new FileMetadata(fileLength,
             //         false, (short) -1, (short) -1, (byte) 0, null, null);
             new_file.write(&[0; 1024])?;
-            Archive::write_empty(&mut new_file, file_length);
+            Archive::_write_empty(&mut new_file, file_length)?;
             // FileEndMetadata fme = new FileEndMetadata(fileLength);
             new_file.write(&[0; 5])?;
 
@@ -541,7 +542,7 @@ impl Archive {
     ) -> io::Result<Vec<file_directory_entry::FileDirectoryEntry>> {
         let lock = self.fldr_l.read().unwrap();
 
-        let filename_hash: u16 = Archive::hash_filename(filename);
+        let filename_hash: u16 = Archive::_hash_filename(filename);
 
         let mut fdes: Vec<file_directory_entry::FileDirectoryEntry> = Vec::new();
 
@@ -696,7 +697,7 @@ impl Archive {
 
         let lock = self.fldr_l.write().unwrap();
 
-        let filename_hash: u16 = Archive::hash_filename(filename);
+        let filename_hash: u16 = Archive::_hash_filename(filename);
 
         let mut buf: [u8; file_directory_entry::SIZE_BYTES as usize];
         for i in 0..self.num_file_dir_slots {
@@ -888,8 +889,8 @@ impl Archive {
     ) -> io::Result<tag_lookup_entry::TagLookupEntry> {
         let num_file_slots = (filenos.len() + 1).next_power_of_two() as u16;
 
-        let mut need_resize: bool = false;
-        let mut offset: u64;
+        let mut need_resize: bool = true;
+        let mut offset: u64 = 0;
         let mut prev_exists: bool = false;
         let mut prev_offset: u64 = 0;
         let mut prev_num_file_slots: u16 = 7;
@@ -926,9 +927,6 @@ impl Archive {
 
                 bytes_read += BASE_SIZE_BYTES + tle.get_num_file_slots() as usize * 2;
             }
-
-            need_resize = true;
-            offset = 0;
         }
         if need_resize {
             self._resize_archive()?;
@@ -966,10 +964,12 @@ impl Archive {
                     bytes_read += BASE_SIZE_BYTES + tle.get_num_file_slots() as usize * 2;
                 }
 
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "No tag lookup entry space found",
-                ));
+                if need_resize {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        "No tag lookup entry space found",
+                    ));
+                }
             }
         }
 
@@ -1032,13 +1032,44 @@ impl Archive {
         return Ok(());
     }
 
-    fn find_file_space(&mut self, length: u64, metadata_length: u64) -> io::Result<u64> {
-        // TODO
-        return Err(io::Error::new(io::ErrorKind::Other, "Not implemented"));
+    /**
+     * Finds an appropriate space for the file and its metadata in the file storage section.
+     *
+     * @param length the length of the file.
+     * @param metadata_length the length of the beginning file metadata.
+     * @return the offset into the file storage section where the file metadata should start
+     */
+    fn _find_file_space(&mut self, length: u64, metadata_length: u64) -> io::Result<u64> {
+        let l = self.flst_l.read().unwrap();
+
+        let space_needed = length + metadata_length + file_end_metadata::SIZE_BYTES as u64;
+        if self.file_storage_section_size_used + space_needed > self.file_storage_section_size {
+            return Err(io::Error::new(io::ErrorKind::Other, "No space found"));
+        }
+
+        let mut bytes_read: usize = 0;
+        let mut buf: [u8; 8] = [0; 8];
+        while (bytes_read + 8 < self.file_storage_section_size as usize) {
+            buf[3..8].copy_from_slice(
+                self.mmap[self.section_offset[FLST_S as usize] + bytes_read
+                    ..self.section_offset[FLST_S as usize] + bytes_read + 5]
+                    .try_into()
+                    .unwrap(),
+            );
+
+            let val = u64::from_be_bytes(buf);
+            if val % 2 == 0 && (val >> 1) >= space_needed {
+                return Ok(bytes_read as u64);
+            }
+
+            bytes_read += (val >> 1) as usize;
+        }
+
+        return Err(io::Error::new(io::ErrorKind::Other, "No space found"));
     }
 
     /**
-     * Creates space for a file at a given offset by writing the file metaadta and file end-metadata.
+     * Creates space for a file at a given offset by writing the file metadata and file end-metadata.
      *
      * @param offset the offset into the file storage section indicating the beginning of the file metadata.
      * @param length the length of the file.
@@ -1049,17 +1080,126 @@ impl Archive {
      * @param tags a list of tag IDs for the file
      * @return the file metadata created.
      */
-    fn allocate_file_space(
+    fn _allocate_file_space(
         &mut self,
         offset: u64,
         length: u64,
         fileno: u16,
         parent: u16,
         filename: String,
+        filetype: u8,
         tags: Vec<u16>,
     ) -> io::Result<file_metadata::FileMetadata> {
-        // TODO
-        return Err(io::Error::new(io::ErrorKind::Other, "Not implemented"));
+        // Check for available space or resize
+        let mut offset: u64 = 0;
+        let mut need_resize: bool;
+        match self._find_file_space(
+            length,
+            file_metadata::FileMetadata::calculate_needed_size(
+                tags.len() as u16,
+                filename.len() as u8,
+            ) as u64,
+        ) {
+            Ok(x) => {
+                offset = x;
+                need_resize = false;
+            }
+            Err(_) => need_resize = true,
+        }
+
+        // If space not found, attempt to resize
+        if need_resize {
+            self._resize_archive()?;
+            match self._find_file_space(
+                length,
+                file_metadata::FileMetadata::calculate_needed_size(
+                    tags.len() as u16,
+                    filename.len() as u8,
+                ) as u64,
+            ) {
+                Ok(x) => {
+                    offset = x;
+                    need_resize = false;
+                }
+                Err(_) => need_resize = true,
+            }
+
+            if need_resize {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "No space found in file storage",
+                ));
+            }
+        }
+
+        // Write the file metadata and end-metadata at the selected offset
+        let fm = file_metadata::FileMetadata::new(
+            fileno,
+            length,
+            true,
+            parent,
+            filetype,
+            filename.as_str(),
+            tags,
+        );
+
+        let fem = file_end_metadata::FileEndMetadata::new(length);
+
+        self.mmap_mut[self.section_offset[FLST_S as usize] + offset as usize
+            ..self.section_offset[FLST_S as usize] + offset as usize + fm.size_bytes()]
+            .copy_from_slice(&fm.as_bytes());
+
+        self.mmap_mut[self.section_offset[FLST_S as usize]
+            + offset as usize
+            + fm.size_bytes()
+            + length as usize
+            ..self.section_offset[FLST_S as usize]
+                + offset as usize
+                + fm.size_bytes()
+                + length as usize
+                + fem.size_bytes()]
+            .copy_from_slice(&fem.as_bytes());
+
+        self.file_storage_section_size_used +=
+            fm.size_bytes() as u64 + length + fem.size_bytes() as u64;
+
+        return Ok(fm);
+    }
+
+    pub fn _coalesce_tglk(&mut self) -> io::Result<()> {
+        return Ok(());
+    }
+
+    pub fn _coalesce_tglk_around(&mut self, offset: u64) -> io::Result<()> {
+        return Ok(());
+    }
+
+    pub fn _coalesce_flst(&mut self) -> io::Result<()> {
+        return Ok(());
+    }
+
+    pub fn _coalesce_flst_around(&mut self, offset: u64) -> io::Result<()> {
+        return Ok(());
+    }
+
+    pub fn add_file(&mut self) -> io::Result<()> {
+        return Ok(());
+    }
+
+    pub fn add_tag(&mut self) -> io::Result<()> {
+        return Ok(());
+    }
+
+    pub fn remove_file(&mut self) -> io::Result<()> {
+        return Ok(());
+    }
+
+    pub fn remove_tag(&mut self) -> io::Result<()> {
+        return Ok(());
+    }
+
+    pub fn read_file(&mut self) -> io::Result<()> {
+        return Ok(());
     }
 
     /**
@@ -1068,7 +1208,7 @@ impl Archive {
      * @param filename the filename to hash
      * @return the hash value
      */
-    fn hash_filename(filename: String) -> u16 {
+    fn _hash_filename(filename: String) -> u16 {
         let mut hasher = DefaultHasher::new();
         filename.hash(&mut hasher);
         (hasher.finish() & 0xffff) as u16
@@ -1080,7 +1220,7 @@ impl Archive {
      * @param file the file output stream.
      * @param num_bytes the number of bytes to write.
      */
-    fn write_empty(file: &mut File, num_bytes: u64) -> io::Result<()> {
+    fn _write_empty(file: &mut File, num_bytes: u64) -> io::Result<()> {
         let byte_buf: [u8; 1024 * 1024] = [0; 1024 * 1024];
         let mut bytes_written: usize;
         let mut bytes_left = num_bytes;

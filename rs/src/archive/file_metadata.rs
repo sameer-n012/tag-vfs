@@ -1,4 +1,6 @@
-pub const MIN_SIZE_BYTES: u8 = 104 / 8;
+pub const MIN_NAME_SIZE: usize = 1;
+pub const BASE_SIZE_BYTES: usize = 104 / 8;
+pub const MIN_SIZE_BYTES: usize = BASE_SIZE_BYTES + (MIN_NAME_SIZE * 8) / 8;
 
 pub struct FileMetadata {
     filename_len: u8,
@@ -109,5 +111,9 @@ impl FileMetadata {
 
     pub fn size_bytes(&self) -> usize {
         self.fm.len() * 2
+    }
+
+    pub fn calculate_needed_size(num_tags: u16, name_length: u8) -> usize {
+        BASE_SIZE_BYTES + (num_tags as usize) * 2 + (name_length as usize)
     }
 }

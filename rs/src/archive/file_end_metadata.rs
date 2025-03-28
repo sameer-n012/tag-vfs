@@ -24,4 +24,8 @@ impl FileEndMetadata {
     pub fn as_bytes(&self) -> [u8; SIZE_BYTES as usize] {
         self.fem.clone()
     }
+
+    pub fn size_bytes(&self) -> usize {
+        SIZE_BYTES as usize
+    }
 }
