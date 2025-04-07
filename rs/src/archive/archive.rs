@@ -1171,6 +1171,12 @@ impl Archive {
     }
 
     pub fn _coalesce_tglk_around(&mut self, offset: u64) -> io::Result<()> {
+
+        let l1 = self.tglk_l.write().unwrap();
+        let l2 = self.tgdr_l.write().unwrap();
+
+
+
         return Ok(());
     }
 
