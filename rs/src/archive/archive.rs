@@ -1,4 +1,5 @@
 use memmap2::{Mmap, MmapMut};
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -11,7 +12,7 @@ use crate::archive::{
 use crate::util::named_file::NamedFile;
 
 use super::file_metadata::FileMetadata;
-use super::tag_lookup_entry::BASE_SIZE_BYTES;
+use super::tag_lookup_entry::{TagLookupEntry, BASE_SIZE_BYTES};
 
 // Constants
 const MAGIC_NUMBER: i32 = 13579;
@@ -50,8 +51,8 @@ pub struct Archive {
     num_tag_dir_slots: u16,
     num_tag_dir_slots_used: u16,
     // tgdr_mbb: Option<MappedByteBuffer>,
-    tag_lookup_section_size: u16, // includes metadata
-    tag_lookup_section_size_used: u16,
+    tag_lookup_section_size: u16,      // includes metadata
+    tag_lookup_section_size_used: u16, // includes metadata
     num_tag_lookup_tuples: u16,
     // tglk_mbb: Option<MappedByteBuffer>,
     file_storage_section_size: u64,      // includes metadata
@@ -1167,15 +1168,213 @@ impl Archive {
     }
 
     pub fn _coalesce_tglk(&mut self) -> io::Result<()> {
+        // create new hash map mapping tag id -> vec of tuple offsets
+        let mut tag_map: HashMap<u16, Vec<TagLookupEntry>> = HashMap::new();
+
+        let mut bytes_read: usize = 4;
+        while (bytes_read + tag_lookup_entry::BASE_SIZE_BYTES
+            < self.tag_lookup_section_size as usize)
+        {
+            let buf = self.mmap[self.section_offset[TGLK_S as usize] + bytes_read
+                ..self.section_offset[TGLK_S as usize]
+                    + bytes_read
+                    + tag_lookup_entry::BASE_SIZE_BYTES]
+                .try_into()
+                .unwrap();
+
+            let tle = TagLookupEntry::from_bytes(buf);
+
+            if tle.is_valid() {
+                let full_tle = TagLookupEntry::from_bytes(
+                    self.mmap[self.section_offset[TGLK_S as usize] + bytes_read
+                        ..self.section_offset[TGLK_S as usize]
+                            + bytes_read
+                            + TagLookupEntry::calculate_needed_size(tle.get_num_file_slots())]
+                        .try_into()
+                        .unwrap(),
+                );
+                let tagno = full_tle.tagno();
+                if !tag_map.contains_key(&tagno) {
+                    tag_map.insert(tagno, Vec::new());
+                }
+                tag_map.get_mut(&tagno).unwrap().push(full_tle);
+            }
+
+            bytes_read += TagLookupEntry::calculate_needed_size(tle.get_num_file_slots());
+        }
+
+        // iterate through hash map and get sizes of future tag tuples
+        let mut cur_offset = 4;
+        for (tagno, vec) in tag_map.iter() {
+            let mut total_files_in_tag: u32 = 0;
+            let mut file_ids: Vec<u16> = Vec::new();
+            for tle in vec.iter() {
+                total_files_in_tag += tle.get_num_files() as u32;
+                file_ids.extend_from_slice(&tle.get_filenos()[0..tle.get_num_files() as usize]);
+            }
+
+            let mut files_per_tle: Vec<u32> = Vec::new();
+            let mut tle_size_counter: u32 = 15;
+            while (total_files_in_tag > 0) {
+                files_per_tle.push(tle_size_counter);
+
+                total_files_in_tag -= tle_size_counter;
+                tle_size_counter = tle_size_counter * 2 + 1;
+            }
+
+            // write new tag lookup entries
+            // TODO
+            file_ids.extend(vec![0; *(files_per_tle.last().unwrap()) as usize]);
+            for i in 0..files_per_tle.len() {
+                let n = *(files_per_tle.get(i).unwrap()) as usize;
+                let mut tle_file_ids: Vec<u16> = file_ids.drain(0..n.min(file_ids.len())).collect();
+                let valid_len = tle_file_ids.len();
+                if valid_len < n {
+                    tle_file_ids.extend(vec![0; n - valid_len])
+                }
+
+                let new_tle_size = TagLookupEntry::calculate_needed_size(n as u16) as u64;
+                let new_tle = TagLookupEntry::new(
+                    *tagno,
+                    true,
+                    n as u16,
+                    valid_len as u16,
+                    tle_file_ids,
+                    cur_offset + new_tle_size,
+                    !file_ids.is_empty(),
+                );
+
+                self.mmap_mut[self.section_offset[TGLK_S as usize] + cur_offset as usize
+                    ..self.section_offset[TGLK_S as usize]
+                        + cur_offset as usize
+                        + new_tle_size as usize]
+                    .copy_from_slice(&new_tle.as_bytes());
+
+                cur_offset += new_tle_size;
+
+                if file_ids.is_empty() {
+                    break;
+                }
+            }
+        }
+
+        // zero out the rest of the tag lookup section
+        let zeros = vec![0; self.tag_lookup_section_size as usize - cur_offset as usize];
+        self.mmap_mut[self.section_offset[TGLK_S as usize] + cur_offset as usize
+            ..self.section_offset[TGLK_S as usize] + cur_offset as usize + zeros.len()]
+            .copy_from_slice(zeros.as_slice());
+
         return Ok(());
     }
 
+    /**
+     * Coalesces the tag lookup section around a given offset. This verifies
+     * that the given offset is invalid and attempts to merge it with the
+     * preceding and following tag lookup tuples. If not invalid, does nothing.
+     * Is comparably slow, should use _coalesce_tglk() if possible
+     *
+     * @param offset the offset into the tag lookup section to coalesce around.
+     */
     pub fn _coalesce_tglk_around(&mut self, offset: u64) -> io::Result<()> {
-
         let l1 = self.tglk_l.write().unwrap();
-        let l2 = self.tgdr_l.write().unwrap();
 
+        let mut buf: [u8; tag_lookup_entry::BASE_SIZE_BYTES] =
+            self.mmap[self.section_offset[TGLK_S as usize] + offset as usize
+                ..self.section_offset[TGLK_S as usize]
+                    + offset as usize
+                    + tag_lookup_entry::BASE_SIZE_BYTES]
+                .try_into()
+                .unwrap();
+        if buf[1] & 0x01 == 1 {
+            return Ok(());
+        }
 
+        let cur_tle = tag_lookup_entry::TagLookupEntry::from_bytes(Vec::from(buf));
+
+        let mut prev_offset: usize = 4;
+        let mut prev_tle: tag_lookup_entry::TagLookupEntry;
+        let mut found_prev: bool = false;
+        while prev_offset + tag_lookup_entry::BASE_SIZE_BYTES
+            < self.tag_lookup_section_size as usize
+        {
+            let buf = self.mmap[self.section_offset[TGLK_S as usize] + 4 + prev_offset
+                ..self.section_offset[TGLK_S as usize]
+                    + prev_offset
+                    + tag_lookup_entry::BASE_SIZE_BYTES]
+                .try_into()
+                .unwrap();
+
+            prev_tle = tag_lookup_entry::TagLookupEntry::from_bytes(buf);
+
+            if !prev_tle.is_valid()
+                && prev_offset
+                    + tag_lookup_entry::TagLookupEntry::calculate_needed_size(
+                        prev_tle.get_num_file_slots(),
+                    )
+                    == offset as usize
+            {
+                found_prev = true;
+                break;
+            }
+
+            if prev_offset
+                + tag_lookup_entry::TagLookupEntry::calculate_needed_size(
+                    prev_tle.get_num_file_slots(),
+                )
+                > offset as usize
+            {
+                break;
+            }
+
+            prev_offset += BASE_SIZE_BYTES + prev_tle.get_num_file_slots() as usize * 2;
+        }
+
+        let buf = self.mmap[self.section_offset[TGLK_S as usize] + offset as usize
+            ..self.section_offset[TGLK_S as usize]
+                + offset as usize
+                + tag_lookup_entry::BASE_SIZE_BYTES]
+            .try_into()
+            .unwrap();
+        let next_tle = tag_lookup_entry::TagLookupEntry::from_bytes(buf);
+        let found_next: bool = !next_tle.is_valid();
+
+        let total_file_slots = (if found_prev {
+            prev_tle.get_num_file_slots()
+        } else {
+            0
+        }) + cur_tle.get_num_file_slots()
+            + (if found_next {
+                next_tle.get_num_file_slots()
+            } else {
+                0
+            });
+
+        if found_prev && found_next {
+            // do stuff
+            let new_tle = tag_lookup_entry::TagLookupEntry::new(
+                0,
+                false,
+                prev_tle.get_num_file_slots()
+                    + cur_tle.get_num_file_slots()
+                    + next_tle.get_num_file_slots()
+                    + 11,
+                0,
+                Vec::new(),
+                0,
+                false,
+            );
+
+            self.mmap_mut[self.section_offset[TGLK_S as usize] + 4 + prev_offset as usize
+                ..self.section_offset[TGLK_S as usize]
+                    + 4
+                    + prev_offset as usize
+                    + new_tle.size_bytes()]
+                .copy_from_slice(&new_tle.as_bytes());
+        } else if found_prev {
+            // TODO do stuff
+        } else if found_next {
+            // TODO do stuff
+        }
 
         return Ok(());
     }

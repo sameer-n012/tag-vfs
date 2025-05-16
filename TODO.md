@@ -83,7 +83,7 @@ Sub-points indicate optional arguments
   - `n` is a 16-bit unsigned short representing the number of files with the given tag
     - `n` should represent valid `f` entries in this tuple alone, plus 1 if the next pointer is valid
   - `f` is a 16-bit unsigned short representing the index of a file with the tag
-    - first tuples for tags have 15 file pointers, then 31, then 63, ...
+    - first tuples for tags have 15 file pointers, then 31, then 63, ... (only for valid tuples, invalid can have any number)
   - `o` is a 40-bit offset from the start of this section to the next tuple for this tag
 
 ### Fourth Section - File Storage
