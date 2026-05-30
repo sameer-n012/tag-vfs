@@ -74,7 +74,12 @@ impl CommandLineApp {
         loop {
             print!("{} ", self.app.config.get_config_string("cliPrefix"));
             stdout.flush().unwrap();
-            stdin.read_line(&mut input).unwrap();
+            let bytes = stdin.read_line(&mut input).unwrap();
+            if bytes == 0 {
+                // EOF on stdin (e.g. piped input exhausted) — clean exit.
+                self.app.clean();
+                break;
+            }
             let line = input.trim().to_string();
             if self.eval_command(&line) {
                 break;

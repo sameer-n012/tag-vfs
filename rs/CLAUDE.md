@@ -99,43 +99,100 @@ When constructing binary entry types, build a `Vec<u8>` with `Vec::with_capacity
 
 ## Known Bugs — All Fixed
 
-1. ~~`FileMetadata::new` and `TagLookupEntry::new` — index into empty Vec~~ **Fixed.** Both now use sequential `extend_from_slice`/`push` to build the byte layout. `calculate_needed_size` in `TagLookupEntry` corrected to use `BASE_SIZE_BYTES` (not `MIN_SIZE_BYTES`). `is_offset_valid` corrected to compare the raw stored value against `num_file_slots` instead of calling `get_num_files()` which already subtracts the overflow bit.
-2. ~~`_read_section_pointers` — wrong byte offsets and wrong slice length~~ **Fixed.** Now pads a 6-byte slice into an 8-byte buffer before calling `usize::from_be_bytes`, and starts the offset scan at byte 2 (after the magic number).
-3. ~~`MAX_FILE_DIR_SLOTS` / `MAX_TAG_DIR_SLOTS` — operator precedence~~ **Fixed.** Both replaced with `u16::MAX`.
-4. ~~`TagDirectoryEntry::get_tagno()` — double right-shift~~ **Fixed.** `get_tagno()` now returns `self.tagno` directly.
-5. ~~`_make_tle` — inconsistent slot count logic, missing offset_valid bit, always creates new TLE~~ **Fixed.** Rewrote as a two-pass function: pass 1 finds the last TLE for the tag; if it has free slots the file is inserted directly. If the last TLE is full, pass 2 allocates a new TLE with the correct doubling slot count, and updates the previous TLE's next-offset bytes plus increments its raw `num_files` field to set the offset_valid bit.
-6. ~~`_coalesce_tglk` — integer underflow~~ **Fixed.** Uses `saturating_sub` when decrementing the remaining file count.
-7. ~~`_resize_archive` comment~~ **Fixed.** Section 4 write block is now labelled correctly.
-8. ~~`bytes_read <= 0` on `usize`~~ **Fixed.** All changed to `== 0`.
+1. ~~`FileMetadata::new` and `TagLookupEntry::new` — index into empty Vec~~ **Fixed.**
+2. ~~`_read_section_pointers` — wrong byte offsets and wrong slice length~~ **Fixed.**
+3. ~~`MAX_FILE_DIR_SLOTS` / `MAX_TAG_DIR_SLOTS` — operator precedence~~ **Fixed.**
+4. ~~`TagDirectoryEntry::get_tagno()` — double right-shift~~ **Fixed.**
+5. ~~`_make_tle` — inconsistent slot count logic, missing offset_valid bit~~ **Fixed.**
+6. ~~`_coalesce_tglk` — integer underflow~~ **Fixed.**
+7. ~~`_resize_archive` comment~~ **Fixed.**
+8. ~~`bytes_read <= 0` on `usize`~~ **Fixed.**
+9. ~~`get_fm` read `MIN_SIZE_BYTES` (14) instead of `BASE_SIZE_BYTES` (13)~~ **Fixed.** The extra byte polluted filenames (e.g. `hello.txth`) and made `size_bytes()` off by one, shifting all data-offset calculations on read paths.
+10. ~~`_find_file_space` advanced `bytes_read` by data-length only~~ **Fixed.** Must advance by full block size (`full_FM_size + data_len + FEM_size`) to skip past valid files correctly.
+11. ~~`_allocate_file_space` never split the free block~~ **Fixed.** After placing a file the remainder is now written as a new free FM+FEM so future scans find it.
+12. ~~`_read_s1_meta` computed `file_storage_section_size_used` by reading FDE bytes with wrong strides~~ **Fixed.** Replaced with `_compute_storage_used()`, which scans section 4 directly and sums valid block sizes. Called at the end of `Archive::new()`.
+13. ~~`get_filename()` in `FileMetadata` sliced to end of buffer~~ **Fixed.** Now slices to `start + filename_len` to avoid including trailing bytes.
 
 ## Architectural Issues — All Fixed
 
-1. ~~Dual `Mmap` + `MmapMut` on the same file — unsound~~ **Fixed.** Dropped `mmap: Mmap`; all reads go through `mmap_mut` via `Deref<Target=[u8]>`.
-2. ~~Contiguity requirement not enforced on delete~~ **Fixed.** Directory scans iterate the full slot range. Slot counts are written back to the mmap in all four create/delete methods.
-3. ~~`_make_tle` always allocates new instead of filling existing slots~~ **Fixed** as part of item 5 above.
+1. ~~Dual `Mmap` + `MmapMut` on the same file — unsound~~ **Fixed.**
+2. ~~Contiguity requirement not enforced on delete~~ **Fixed.**
+3. ~~`_make_tle` always allocates new instead of filling existing slots~~ **Fixed.**
 
-## Implementing Stub Methods
+## Implemented Commands
 
-Priority order for completing the implementation:
+All commands except `apply` and `scrape` are fully implemented end-to-end:
 
-1. ~~Fix the bugs above first~~ All bugs fixed.
-2. `remove_file` — mark FM invalid, call `_remove_fileno_from_all_tag_lookups`, call `_delete_fde`, call `_coalesce_flst_around`.
-3. `remove_tag` — call `_remove_tagno_from_all_file_metadata`, call `_delete_all_tle_for_tag`, call `_delete_tde`, call `_coalesce_tglk`.
-4. `ArchiveManager::remove` / `import_files` / `add_tags` / `remove_tags` / `list_files` / `size_of`.
-5. `CommandLineApp::eval_command` — wire up the commented-out command branches.
-6. `expand` / `reduce` — decompression/compression of the archive to/from a directory tree.
+| Command  | Notes |
+|----------|-------|
+| `import` | single files and `-r` recursive directories |
+| `remove` | by `-f` filename and/or `-t` tag (AND semantics) |
+| `tag`    | add or `-d` remove tags from matching files |
+| `ls`     | list files; optional positional tag filters (AND) |
+| `sz`     | combined size of matching files |
+| `open`   | extract to session cache, launch system viewer |
+| `flush`  | write cached files back to archive; change-detection skips unchanged |
+| `destroy`| discard cached files (does not touch archive) |
+| `expand` | write all archive files to a directory; `-f` selects an alternate source `.dat` |
+| `reduce` | import files/directories into archive (alias for `import`) |
+| `merge`  | ingest another `.dat`; creates missing tags, preserves existing ones |
+| `config` | set key/value; `-l` lists all; `-p` persists (file write not yet implemented) |
+| `apply`  | **stub** — silently does nothing |
+| `scrape` | **stub** — silently does nothing |
+| `quit`   | confirmation prompt; `clean()` removes session cache |
 
-## Commands to Implement
+## CLI Flags
 
-See TODO.md for the full command spec. Commands are parsed in `CommandLineApp::eval_command` and dispatched to `ArchiveManager` methods. Each CLI command maps one-to-one to an `ArchiveManager` method with the same name.
+`--home <DIR>` — override the app home directory (default `~/filevault`). The archive is stored at `<DIR>/archive.dat` and the session cache at `<DIR>/tmp_<session_id>/`. Used by integration tests for isolation.
 
 ## Running and Testing
 
 ```bash
 cd rs
+
+# Build
 cargo build
-cargo test
-cargo run
+
+# Rust unit tests (7 tests, runs in ~0.04 s)
+cargo test --lib -- --test-threads=1
+
+# Bash integration tests (requires built binary)
+bash tests/run_all.sh           # build + run all suites
+bash tests/run_all.sh --no-build  # skip cargo build step
+bash tests/test_<name>.sh       # run a single suite
 ```
 
-Tests live in `archive_manager.rs` under `#[cfg(test)]`. Use `tempfile::TempDir` for isolation and a `ScopedHome` guard to redirect `$HOME`.
+### Rust unit tests (`archive_manager.rs`)
+
+| Test | What it covers |
+|------|----------------|
+| `cache_creates_cached_file` | `cache()` copies file to cache dir, adds to `open_files` |
+| `flush_removes_cached_file_by_name` | `flush()` writes new file to archive, removes from `open_files` |
+| `destroy_filters_cached_files` | `destroy()` removes matching file, leaves others |
+| `destroy_all_clears_cache` | `destroy_all()` empties `open_files` |
+| `expand_writes_files_to_directory` | import → expand → verify file content round-trips |
+| `reduce_adds_files_to_archive` | `reduce()` → expand → verify content |
+| `merge_combines_two_archives` | two archives merged → both files + correct content |
+
+Use `tempfile::TempDir` for isolation. Do **not** use `ScopedHome` for tests that create archives — pass an explicit temp path to `create_archive_file` instead (macOS `dirs::home_dir()` ignores `$HOME`).
+
+### Bash integration tests (`tests/`)
+
+Each script sources `tests/common.sh` for `setup()`/`teardown()`, `run_vfs()`, and `assert_*` helpers. All tests use `--home <tmpdir>` for isolation.
+
+| Script | Commands tested |
+|--------|----------------|
+| `test_import.sh` | `import` single, multi, recursive, data integrity |
+| `test_remove.sh` | `remove` by name, by tag, nonexistent file |
+| `test_tag.sh` | `tag` add, remove, multi-tag AND filter |
+| `test_ls.sh` | `ls` all files, tag filter, empty archive |
+| `test_sz.sh` | `sz` known size, multiple files, tag filter |
+| `test_flush.sh` | `flush` no-cache error, no-change path, modify+flush via FIFO, `flush -a` |
+| `test_destroy.sh` | `destroy` removes cached file, archive intact, `destroy -a` |
+| `test_expand.sh` | `expand` single, multiple, `expand -f` alternate archive |
+| `test_reduce.sh` | `reduce` single, recursive, accumulation |
+| `test_merge.sh` | `merge` presence, content, tag preservation |
+| `test_config.sh` | `config -l`, set prefix, unknown key, `-p` flag |
+| `test_e2e.sh` | Full 9-phase workflow: import→tag→sz→flush→remove→expand→reduce→merge→config |
+
+Tests that need to interleave external file modification with a live REPL session (flush, destroy) use a named FIFO as stdin and run the binary in the background.

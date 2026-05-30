@@ -107,6 +107,7 @@ impl Archive {
         a._read_s2_meta()?;
         a._read_s3_meta()?;
         a._read_s4_meta()?;
+        a._compute_storage_used()?;
 
         return Ok(a);
     }
@@ -390,25 +391,45 @@ impl Archive {
                 .unwrap(),
         );
 
-        let mut bytes_read: usize = 0;
-        let mut space_used: u64 = 0;
-        let mut buffer: u64;
-        while bytes_read
-            < self.num_file_dir_slots as usize * file_directory_entry::SIZE_BYTES as usize
-        {
-            buffer = u64::from_be_bytes(
-                self.mmap_mut[self.section_offset[FLDR_S as usize] as usize + 4 + bytes_read
-                    ..self.section_offset[FLDR_S as usize] as usize + 4 + bytes_read + 8]
-                    .try_into()
-                    .unwrap(),
-            );
-            if buffer % 2 == 1 {
-                space_used += buffer >> 1;
-            }
-            bytes_read += file_directory_entry::SIZE_BYTES as usize - 5;
-        }
-        self.file_storage_section_size_used = space_used + 2;
+        // file_storage_section_size_used is computed later by _compute_storage_used()
+        // once section 4 metadata is available.
+        self.file_storage_section_size_used = 0;
 
+        Ok(())
+    }
+
+    /**
+     * Scans section 4 (file storage) and computes the total bytes consumed by
+     * valid file blocks. Called after all section metadata has been loaded.
+     *
+     */
+    fn _compute_storage_used(&mut self) -> io::Result<()> {
+        let mut used: u64 = 4; // 4-byte section header
+        let mut offset = 4usize;
+        while offset + file_metadata::BASE_SIZE_BYTES
+            < self.file_storage_section_size as usize
+        {
+            let base_start = self.section_offset[FLST_S as usize] + offset;
+            let base: Vec<u8> = self.mmap_mut
+                [base_start..base_start + file_metadata::BASE_SIZE_BYTES]
+                .to_vec();
+            let fm = file_metadata::FileMetadata::from_bytes(base);
+            let data_len = fm.get_length() as usize;
+            let full_fm_size = file_metadata::BASE_SIZE_BYTES
+                + fm.get_num_tags_count() as usize * 2
+                + fm.get_filename_len() as usize;
+            let block_size = full_fm_size + data_len + file_end_metadata::SIZE_BYTES as usize;
+            if block_size
+                <= file_metadata::BASE_SIZE_BYTES + file_end_metadata::SIZE_BYTES as usize
+            {
+                break; // zero-length block — stop to avoid infinite loop
+            }
+            if fm.is_valid() {
+                used += block_size as u64;
+            }
+            offset += block_size;
+        }
+        self.file_storage_section_size_used = used;
         Ok(())
     }
 

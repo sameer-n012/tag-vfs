@@ -101,19 +101,22 @@ impl RunConfiguration {
                     .action(ArgAction::SetTrue),
             )
             .arg(
-                Arg::new("help")
-                    .short('h')
-                    .long("help")
-                    .help("prints the usage text")
+                Arg::new("home")
+                    .long("home")
+                    .help("use this directory as the app home (default: ~/filevault)")
                     .required(false)
-                    .action(ArgAction::Help),
+                    .value_name("DIR"),
             )
             .try_get_matches_from(self.args.clone())
             .unwrap_or_default();
 
-        if matches.contains_id("gui") {
+        if matches.get_flag("gui") {
             self.config_map
                 .insert("gui".to_string(), "true".to_string());
+        }
+
+        if let Some(home) = matches.get_one::<String>("home") {
+            self.config_map.insert("appHomePath".to_string(), home.to_string());
         }
 
         if matches.contains_id("help") {
@@ -158,6 +161,9 @@ impl RunConfiguration {
     }
 
     pub fn get_app_home_path_absolute(&self) -> String {
+        if let Some(path) = self.config_map.get("appHomePath") {
+            return path.clone();
+        }
         format!("{}/filevault", dirs::home_dir().unwrap().display())
     }
 

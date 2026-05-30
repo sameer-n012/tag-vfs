@@ -13,14 +13,9 @@ use std::env;
 
 fn main() {
     let mut config = RunConfiguration::new(env::args());
-    if let Err(e) = config.parse_default_config_file() {
-        eprintln!("Error parsing default config file: {}", e);
-        std::process::exit(1);
-    }
-    if let Err(e) = config.parse_user_config_file() {
-        eprintln!("Error parsing user config file: {}", e);
-        std::process::exit(1);
-    }
+    // Config files are optional; missing files are silently ignored.
+    let _ = config.parse_default_config_file();
+    let _ = config.parse_user_config_file();
     if let Err(e) = config.parse_command_line_args() {
         eprintln!("Error parsing command line arguments: {}", e);
         std::process::exit(1);
