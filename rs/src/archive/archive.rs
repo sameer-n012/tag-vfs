@@ -622,26 +622,20 @@ impl Archive {
      * @return the file metadata.
      */
     pub fn get_fm(&self, offset: u64) -> io::Result<file_metadata::FileMetadata> {
-        let mut buf: Vec<u8> = self.mmap_mut[self.section_offset[FLST_S as usize] + offset as usize
-            ..self.section_offset[FLST_S as usize]
-                + offset as usize
-                + file_metadata::MIN_SIZE_BYTES as usize]
+        let base_start = self.section_offset[FLST_S as usize] + offset as usize;
+        let mut buf: Vec<u8> = self.mmap_mut
+            [base_start..base_start + file_metadata::BASE_SIZE_BYTES]
             .to_vec();
 
         let name_len = buf[10] as usize;
         let num_tags = u16::from_be_bytes(buf[11..13].try_into().unwrap()) as usize;
 
-        buf.extend_from_slice(
-            &self.mmap_mut[self.section_offset[FLST_S as usize]
-                + offset as usize
-                + file_metadata::MIN_SIZE_BYTES as usize
-                ..self.section_offset[FLST_S as usize]
-                    + offset as usize
-                    + file_metadata::MIN_SIZE_BYTES as usize
-                    + name_len
-                    + num_tags * 2]
-                .to_vec(),
-        );
+        if name_len + num_tags * 2 > 0 {
+            buf.extend_from_slice(
+                &self.mmap_mut[base_start + file_metadata::BASE_SIZE_BYTES
+                    ..base_start + file_metadata::BASE_SIZE_BYTES + name_len + num_tags * 2],
+            );
+        }
 
         return Ok(file_metadata::FileMetadata::from_bytes(buf));
     }
@@ -1062,30 +1056,31 @@ impl Archive {
     fn _find_file_space(&mut self, length: u64, metadata_length: u64) -> io::Result<u64> {
         let l = self.flst_l.read().unwrap();
 
-        let space_needed = length + metadata_length + file_end_metadata::SIZE_BYTES as u64;
-        if self.file_storage_section_size_used + space_needed > self.file_storage_section_size {
+        let space_needed = (length + metadata_length + file_end_metadata::SIZE_BYTES as u64) as usize;
+        if self.file_storage_section_size_used + space_needed as u64 > self.file_storage_section_size {
             return Err(io::Error::new(io::ErrorKind::Other, "No space found"));
         }
 
         let mut bytes_read: usize = 4; // skip 4-byte section header
-        let mut buf: [u8; 8] = [0; 8];
-        while (bytes_read + 8 < self.file_storage_section_size as usize) {
-            buf[3..8].copy_from_slice(
-                self.mmap_mut[self.section_offset[FLST_S as usize] + bytes_read
-                    ..self.section_offset[FLST_S as usize] + bytes_read + 5]
-                    .try_into()
-                    .unwrap(),
-            );
+        while bytes_read + file_metadata::BASE_SIZE_BYTES < self.file_storage_section_size as usize {
+            let scan_start = self.section_offset[FLST_S as usize] + bytes_read;
+            let base: Vec<u8> = self.mmap_mut
+                [scan_start..scan_start + file_metadata::BASE_SIZE_BYTES]
+                .to_vec();
+            let scan_fm = file_metadata::FileMetadata::from_bytes(base);
+            let data_len = scan_fm.get_length() as usize;
+            let full_fm_size = file_metadata::BASE_SIZE_BYTES
+                + scan_fm.get_num_tags_count() as usize * 2
+                + scan_fm.get_filename_len() as usize;
+            let block_size = full_fm_size + data_len + file_end_metadata::SIZE_BYTES as usize;
 
-            let val = u64::from_be_bytes(buf);
-            if val % 2 == 0 && (val >> 1) >= space_needed {
-                return Ok(bytes_read as u64);
-            }
-
-            if (val >> 1) == 0 {
+            if block_size <= file_end_metadata::SIZE_BYTES as usize + file_metadata::BASE_SIZE_BYTES {
                 return Err(io::Error::new(io::ErrorKind::Other, "Zero-length block in file storage"));
             }
-            bytes_read += (val >> 1) as usize;
+            if !scan_fm.is_valid() && block_size >= space_needed {
+                return Ok(bytes_read as u64);
+            }
+            bytes_read += block_size;
         }
 
         return Err(io::Error::new(io::ErrorKind::Other, "No space found"));
@@ -1155,6 +1150,17 @@ impl Archive {
             }
         }
 
+        // Read the free block's total size so we can split the remainder.
+        let free_base: Vec<u8> = self.mmap_mut[self.section_offset[FLST_S as usize] + offset as usize
+            ..self.section_offset[FLST_S as usize] + offset as usize + file_metadata::BASE_SIZE_BYTES]
+            .to_vec();
+        let free_fm_scan = file_metadata::FileMetadata::from_bytes(free_base);
+        let free_block_total = file_metadata::BASE_SIZE_BYTES
+            + free_fm_scan.get_num_tags_count() as usize * 2
+            + free_fm_scan.get_filename_len() as usize
+            + free_fm_scan.get_length() as usize
+            + file_end_metadata::SIZE_BYTES as usize;
+
         // Write the file metadata and end-metadata at the selected offset
         let fm = file_metadata::FileMetadata::new(
             fileno,
@@ -1167,6 +1173,7 @@ impl Archive {
         );
 
         let fem = file_end_metadata::FileEndMetadata::new(length);
+        let used = fm.size_bytes() + length as usize + fem.size_bytes();
 
         self.mmap_mut[self.section_offset[FLST_S as usize] + offset as usize
             ..self.section_offset[FLST_S as usize] + offset as usize + fm.size_bytes()]
@@ -1185,6 +1192,21 @@ impl Archive {
 
         self.file_storage_section_size_used +=
             fm.size_bytes() as u64 + length + fem.size_bytes() as u64;
+
+        // Split the free block: write a new free FM at the remainder if large enough.
+        const MIN_FREE_BLOCK: usize = file_metadata::BASE_SIZE_BYTES + file_end_metadata::SIZE_BYTES as usize;
+        if free_block_total > used + MIN_FREE_BLOCK {
+            let remainder = free_block_total - used;
+            let remainder_data_len = (remainder - MIN_FREE_BLOCK) as u64;
+            let rem_fm = file_metadata::FileMetadata::new(0, remainder_data_len, false, 0, 0, "", vec![]);
+            let rem_fem = file_end_metadata::FileEndMetadata::new(remainder_data_len);
+            let rem_start = self.section_offset[FLST_S as usize] + offset as usize + used;
+            self.mmap_mut[rem_start..rem_start + rem_fm.size_bytes()]
+                .copy_from_slice(&rem_fm.as_bytes());
+            self.mmap_mut[rem_start + rem_fm.size_bytes() + remainder_data_len as usize
+                ..rem_start + rem_fm.size_bytes() + remainder_data_len as usize + rem_fem.size_bytes()]
+                .copy_from_slice(&rem_fem.as_bytes());
+        }
 
         return Ok(fm);
     }

@@ -89,9 +89,18 @@ impl FileMetadata {
         self.fm[9]
     }
 
+    pub fn get_filename_len(&self) -> u8 {
+        self.fm[10]
+    }
+
+    pub fn get_num_tags_count(&self) -> u16 {
+        self.num_tags
+    }
+
     pub fn get_filename(&self) -> String {
         let filename_len = self.fm[10] as usize;
-        let filename = String::from_utf8_lossy(&self.fm[13 + self.num_tags as usize * 2..]);
+        let start = 13 + self.num_tags as usize * 2;
+        let filename = String::from_utf8_lossy(&self.fm[start..start + filename_len]);
         filename.to_string()
     }
 

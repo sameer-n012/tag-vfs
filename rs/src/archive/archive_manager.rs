@@ -4,7 +4,7 @@ use crate::archive::tag_lookup_entry;
 use crate::data::file_instance::FileInstance;
 use crate::util::named_file::NamedFile;
 use std::collections::{HashMap, HashSet};
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, ErrorKind};
 use std::path::Path;
 use std::sync::Arc;
@@ -70,6 +70,30 @@ fn collect_paths_recursive(dir: &Path, out: &mut Vec<String>) -> io::Result<()> 
         }
     }
     Ok(())
+}
+
+// Writes all valid files from an archive into a destination directory.
+fn expand_archive(archive: &mut Archive, dest: &Path) -> io::Result<()> {
+    fs::create_dir_all(dest)?;
+    let num_slots = archive.num_file_dir_slots();
+    let mut count = 0;
+    for fileno in 0..num_slots {
+        match archive.get_fde(fileno) {
+            Ok(fde) if fde.is_valid() => {}
+            _ => continue,
+        }
+        let data = archive.read_file_data(fileno)?;
+        let fi = match archive.read_file(fileno)? {
+            Some(fi) => fi,
+            None => continue,
+        };
+        let out_path = dest.join(&fi.name);
+        fs::write(&out_path, &data)?;
+        println!("Expanded {} -> {}", fi.name, out_path.display());
+        count += 1;
+    }
+    println!("Expanded {} file(s) to {}", count, dest.display());
+    return Ok(());
 }
 
 // Formats a byte count as a human-readable string.
@@ -620,31 +644,116 @@ impl ArchiveManager {
 
     pub fn apply(
         &self,
-        filenames: Vec<String>,
-        tags: Vec<String>,
-        command: String,
+        _filenames: Vec<String>,
+        _tags: Vec<String>,
+        _command: String,
     ) -> io::Result<()> {
         Ok(())
     }
 
-    pub fn scrape(&self, filenames: Vec<String>, tags: Vec<String>) -> io::Result<()> {
+    pub fn scrape(&self, _filenames: Vec<String>, _tags: Vec<String>) -> io::Result<()> {
         Ok(())
     }
 
-    pub fn merge(&self, path: String) -> io::Result<()> {
-        Ok(())
+    /*
+     * Merges all files and tags from another archive file into the working
+     * archive. Tags that do not yet exist are created automatically. Files
+     * are written to the session cache temporarily to satisfy add_file's
+     * path requirement and cleaned up afterward.
+     *
+     * @param path the path to the source .dat archive file to merge.
+     * @return io::Result<()> indicating success or failure.
+     */
+    pub fn merge(&mut self, path: String) -> io::Result<()> {
+        // Phase 1: open source archive and collect all valid files.
+        let src_file = OpenOptions::new().read(true).write(true).open(path.clone())?;
+        let mut src = Archive::new(NamedFile::new(src_file, path))?;
+
+        let num_slots = src.num_file_dir_slots();
+        let mut collected: Vec<(String, Vec<u8>, Vec<String>)> = Vec::new();
+        for fileno in 0..num_slots {
+            match src.get_fde(fileno) {
+                Ok(fde) if fde.is_valid() => {}
+                _ => continue,
+            }
+            let data = src.read_file_data(fileno)?;
+            let fi = match src.read_file(fileno)? {
+                Some(fi) => fi,
+                None => continue,
+            };
+            let tags: Vec<String> = fi.tags.into_iter().collect();
+            collected.push((fi.name, data, tags));
+        }
+        drop(src);
+
+        // Phase 2: add collected files to the current archive.
+        let cache_dir_path = self.run_config.get_cache_path_absolute();
+        fs::create_dir_all(&cache_dir_path)?;
+
+        let archive = self.archive.as_mut().ok_or_else(|| {
+            io::Error::new(ErrorKind::Other, "No archive loaded")
+        })?;
+
+        for (name, data, tags) in &collected {
+            // Ensure all source tags exist in the current archive.
+            for tagname in tags {
+                if archive.get_tde_from_tagname(tagname.clone())?.is_none() {
+                    archive.add_tag(tagname.clone())?;
+                }
+            }
+
+            // Write to a temp file in the cache dir so add_file can read it.
+            let temp_path = Path::new(&cache_dir_path).join(name);
+            fs::write(&temp_path, data)?;
+
+            let mut fi = FileInstance::new(&temp_path.to_string_lossy(), None, None);
+            fi.tags = tags.iter().cloned().collect();
+            archive.add_file(fi)?;
+
+            let _ = fs::remove_file(&temp_path);
+            println!("Merged {}", name);
+        }
+
+        return Ok(());
     }
 
-    pub fn expand_from(&self, destination: String, path: String) -> io::Result<()> {
-        Ok(())
+    /*
+     * Expands the files stored in a given archive file to a directory tree.
+     * Opens the archive at path without replacing the active working archive.
+     *
+     * @param destination the directory path to write files into.
+     * @param path the path to the source .dat archive file to expand.
+     * @return io::Result<()> indicating success or failure.
+     */
+    pub fn expand_from(&mut self, destination: String, path: String) -> io::Result<()> {
+        let src_file = OpenOptions::new().read(true).write(true).open(path.clone())?;
+        let mut src = Archive::new(NamedFile::new(src_file, path))?;
+        return expand_archive(&mut src, Path::new(&destination));
     }
 
-    pub fn expand(&self, destination: String) -> io::Result<()> {
-        Ok(())
+    /*
+     * Expands all files in the working archive to a directory tree.
+     *
+     * @param destination the directory path to write files into.
+     * @return io::Result<()> indicating success or failure.
+     */
+    pub fn expand(&mut self, destination: String) -> io::Result<()> {
+        let archive = self.archive.as_mut().ok_or_else(|| {
+            io::Error::new(ErrorKind::Other, "No archive loaded")
+        })?;
+        return expand_archive(archive, Path::new(&destination));
     }
 
-    pub fn reduce(&self, paths: Vec<String>, recursive: bool) -> io::Result<()> {
-        Ok(())
+    /*
+     * Compresses files from the filesystem into the working archive.
+     * Directories are only traversed when recursive is true.
+     *
+     * @param paths the file or directory paths to compress.
+     * @param recursive whether to recurse into subdirectories.
+     * @return io::Result<()> indicating success or failure.
+     */
+    pub fn reduce(&mut self, paths: Vec<String>, recursive: bool) -> io::Result<()> {
+        return self.import_files(paths, recursive);
     }
 
     // Implement other methods here
@@ -757,6 +866,102 @@ mod tests {
             .open_files
             .values()
             .any(|named| named.path.contains("keep.txt")));
+        Ok(())
+    }
+
+    #[test]
+    fn expand_writes_files_to_directory() -> io::Result<()> {
+        let home = TempDir::new()?;
+        let _guard = ScopedHome::set(home.path());
+        let config = RunConfiguration::new(std::env::args());
+        let rc = Arc::new(config);
+        let mut manager = ArchiveManager::new(Arc::clone(&rc));
+
+        let archive_dir = TempDir::new()?;
+        let archive_path = archive_dir.path().join("archive.dat").to_string_lossy().to_string();
+        manager.create_archive_file(archive_path)?;
+
+        // Import a file into the archive
+        let source = TempDir::new()?;
+        let src_file = source.path().join("hello.txt");
+        fs::write(&src_file, b"hello world")?;
+        manager.import_files(vec![src_file.to_string_lossy().to_string()], false)?;
+
+        // Expand to a destination directory
+        let dest = TempDir::new()?;
+        manager.expand(dest.path().to_string_lossy().to_string())?;
+
+        let expanded = dest.path().join("hello.txt");
+        assert!(expanded.exists(), "expanded file should exist");
+        assert_eq!(fs::read(&expanded)?, b"hello world");
+        Ok(())
+    }
+
+    #[test]
+    fn reduce_adds_files_to_archive() -> io::Result<()> {
+        let home = TempDir::new()?;
+        let _guard = ScopedHome::set(home.path());
+        let config = RunConfiguration::new(std::env::args());
+        let rc = Arc::new(config);
+        let mut manager = ArchiveManager::new(Arc::clone(&rc));
+
+        let archive_dir = TempDir::new()?;
+        let archive_path = archive_dir.path().join("archive.dat").to_string_lossy().to_string();
+        manager.create_archive_file(archive_path)?;
+
+        let source = TempDir::new()?;
+        let src_file = source.path().join("reduce_test.txt");
+        fs::write(&src_file, b"reduced content")?;
+
+        manager.reduce(vec![src_file.to_string_lossy().to_string()], false)?;
+
+        // Verify file is in the archive by expanding it
+        let dest = TempDir::new()?;
+        manager.expand(dest.path().to_string_lossy().to_string())?;
+        let out = dest.path().join("reduce_test.txt");
+        assert!(out.exists(), "reduced file should appear after expand");
+        assert_eq!(fs::read(&out)?, b"reduced content");
+        Ok(())
+    }
+
+    #[test]
+    fn merge_combines_two_archives() -> io::Result<()> {
+        let home = TempDir::new()?;
+        let _guard = ScopedHome::set(home.path());
+        let config = RunConfiguration::new(std::env::args());
+        let rc = Arc::new(config);
+
+        // Create archive A with file_a.txt
+        let dir_a = TempDir::new()?;
+        let path_a = dir_a.path().join("a.dat").to_string_lossy().to_string();
+        let mut mgr_a = ArchiveManager::new(Arc::clone(&rc));
+        mgr_a.create_archive_file(path_a.clone())?;
+        let source = TempDir::new()?;
+        let file_a = source.path().join("file_a.txt");
+        fs::write(&file_a, b"from archive a")?;
+        mgr_a.import_files(vec![file_a.to_string_lossy().to_string()], false)?;
+
+        // Create archive B with file_b.txt
+        let dir_b = TempDir::new()?;
+        let path_b = dir_b.path().join("b.dat").to_string_lossy().to_string();
+        let mut mgr_b = ArchiveManager::new(Arc::clone(&rc));
+        mgr_b.create_archive_file(path_b.clone())?;
+        let file_b = source.path().join("file_b.txt");
+        fs::write(&file_b, b"from archive b")?;
+        mgr_b.import_files(vec![file_b.to_string_lossy().to_string()], false)?;
+
+        // Merge B into A
+        mgr_a.merge(path_b)?;
+
+        // Expand A and verify both files are present
+        let dest = TempDir::new()?;
+        mgr_a.expand(dest.path().to_string_lossy().to_string())?;
+        let out_a = dest.path().join("file_a.txt");
+        let out_b = dest.path().join("file_b.txt");
+        assert!(out_a.exists(), "file_a.txt should be in merged archive");
+        assert!(out_b.exists(), "file_b.txt should be in merged archive");
+        assert_eq!(fs::read(&out_a)?, b"from archive a");
+        assert_eq!(fs::read(&out_b)?, b"from archive b");
         Ok(())
     }
 
