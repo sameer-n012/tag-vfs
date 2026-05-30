@@ -161,10 +161,24 @@ impl ArchiveManager {
 
     pub fn open_files(&mut self, filenames: Vec<String>, tags: Vec<String>) -> io::Result<()> {
         if !tags.is_empty() {
-            println!("Opening by tag filter is not yet implemented.");
-        }
-        for filename in filenames {
-            self.open(filename)?;
+            // Tag filter: find matching filenos, collect names, then open each
+            let archive = self.archive.as_mut().ok_or_else(|| {
+                io::Error::new(ErrorKind::Other, "No archive loaded")
+            })?;
+            let filenos = collect_matching_filenos(archive, &filenames, &tags)?;
+            let mut names: Vec<String> = Vec::new();
+            for fileno in filenos {
+                if let Some(fi) = archive.read_file(fileno)? {
+                    names.push(fi.name.clone());
+                }
+            }
+            for name in names {
+                self.open(name)?;
+            }
+        } else {
+            for filename in filenames {
+                self.open(filename)?;
+            }
         }
         return Ok(());
     }
@@ -217,13 +231,6 @@ impl ArchiveManager {
     }
 
     pub fn flush(&mut self, filenames: Vec<String>, tags: Vec<String>) -> io::Result<()> {
-        if !tags.is_empty() {
-            return Err(io::Error::new(
-                ErrorKind::Unsupported,
-                "Tag filtering is not implemented yet",
-            ));
-        }
-
         if self.open_files.is_empty() {
             return Err(io::Error::new(ErrorKind::NotFound, "No cached files"));
         }
@@ -234,8 +241,8 @@ impl ArchiveManager {
             Some(filenames.into_iter().map(|n| n.to_ascii_lowercase()).collect())
         };
 
-        // Collect work items before mutably borrowing archive
-        let work: Vec<(u16, String, String)> = self
+        // Collect candidates by filename filter (no archive needed yet)
+        let candidates: Vec<(u16, String, String)> = self
             .open_files
             .iter()
             .filter_map(|(&key, named)| {
@@ -252,6 +259,35 @@ impl ArchiveManager {
                 Some((key, named.path.clone(), file_name))
             })
             .collect();
+
+        // Apply tag filter: keep only cached files whose archive entry has all given tags
+        let work: Vec<(u16, String, String)> = if tags.is_empty() {
+            candidates
+        } else {
+            let archive = self.archive.as_mut().ok_or_else(|| {
+                io::Error::new(ErrorKind::Other, "No archive loaded")
+            })?;
+            let mut tag_nos: Vec<u16> = Vec::new();
+            for tagname in &tags {
+                match archive.get_tde_from_tagname(tagname.clone())? {
+                    Some(tde) => tag_nos.push(tde.get_tagno()),
+                    None => return Ok(()), // unknown tag → nothing to flush
+                }
+            }
+            let mut filtered = Vec::new();
+            for item in candidates {
+                let fdes = archive.get_fde_by_filename(item.2.clone()).unwrap_or_default();
+                if let Some(fde) = fdes.into_iter().find(|f| f.is_valid()) {
+                    if let Ok(fm) = archive.get_fm(fde.get_offset()) {
+                        let file_tags = fm.get_tags();
+                        if tag_nos.iter().all(|t| file_tags.contains(t)) {
+                            filtered.push(item);
+                        }
+                    }
+                }
+            }
+            filtered
+        };
 
         if work.is_empty() {
             return Err(io::Error::new(

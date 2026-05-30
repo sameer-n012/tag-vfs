@@ -52,6 +52,12 @@ impl App {
         &mut self.am
     }
 
+    pub fn update_config(&mut self, key: String, value: String, persist: bool) -> String {
+        // Arc::make_mut clones the config if ArchiveManager holds another reference,
+        // keeping App's copy up to date while ArchiveManager retains its own snapshot.
+        std::sync::Arc::make_mut(&mut self.config).update_config(key, value, persist)
+    }
+
     pub fn clean(&self) {
         let cache_path = self.config.get_cache_path_absolute();
         if Path::new(&cache_path).exists() {

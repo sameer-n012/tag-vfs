@@ -376,11 +376,11 @@ impl CommandLineApp {
             println!("Usage: config <key> <value> [-p] [-l]");
             return false;
         }
-        // Arc<RunConfiguration> does not support interior mutability; config changes
-        // are not persisted across sessions until RunConfiguration uses Arc<RwLock>.
-        println!(
-            "Config update not supported in this build (key={}, value={}).",
-            args.positionals[0], args.positionals[1]
+        let persist = args.flags.contains(&'p');
+        self.app.update_config(
+            args.positionals[0].clone(),
+            args.positionals[1].clone(),
+            persist,
         );
         false
     }
