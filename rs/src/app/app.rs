@@ -48,6 +48,10 @@ impl App {
         }
     }
 
+    pub fn am(&mut self) -> &mut ArchiveManager {
+        &mut self.am
+    }
+
     pub fn clean(&self) {
         let cache_path = self.config.get_cache_path_absolute();
         if Path::new(&cache_path).exists() {

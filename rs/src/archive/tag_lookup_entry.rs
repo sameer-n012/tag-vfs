@@ -22,18 +22,26 @@ impl TagLookupEntry {
         offset: u64,
         offset_valid: bool,
     ) -> Self {
-        let mut tle = Vec::with_capacity(MIN_SIZE_BYTES + (num_file_slots as usize) * 2);
+        let mut tle = Vec::with_capacity(BASE_SIZE_BYTES + (num_file_slots as usize) * 2);
 
         let mut filenos_as_u8: Vec<u8> = Vec::with_capacity(filenos.len() * 2);
         for fileno in filenos {
             filenos_as_u8.extend_from_slice(&fileno.to_be_bytes());
         }
 
-        tle[0..2].copy_from_slice(&(tagno << 1 + (if valid { 1 } else { 0 })).to_be_bytes());
-        tle[2..4].copy_from_slice(&num_file_slots.to_be_bytes());
-        tle[4..6].copy_from_slice(&(num_files + (if offset_valid { 1 } else { 0 })).to_be_bytes());
-        tle[6..11].copy_from_slice(&offset.to_be_bytes()[3..]);
-        tle.extend(&filenos_as_u8);
+        tle.extend_from_slice(&((tagno << 1) + (if valid { 1 } else { 0 })).to_be_bytes()); // 2 bytes
+        tle.extend_from_slice(&num_file_slots.to_be_bytes());                                // 2 bytes
+        tle.extend_from_slice(
+            &(num_files + (if offset_valid { 1 } else { 0 })).to_be_bytes(),
+        );                                                                                    // 2 bytes
+        tle.extend_from_slice(&offset.to_be_bytes()[3..]);                                   // 5 bytes
+        tle.extend_from_slice(&filenos_as_u8);
+        // pad remaining unused slots with zeros
+        let filled = filenos_as_u8.len();
+        let total = (num_file_slots as usize) * 2;
+        if filled < total {
+            tle.extend(std::iter::repeat(0u8).take(total - filled));
+        }
 
         TagLookupEntry { tagno, tle }
     }
@@ -64,7 +72,14 @@ impl TagLookupEntry {
     }
 
     pub fn is_offset_valid(&self) -> bool {
-        self.get_num_files() > self.get_num_file_slots()
+        let raw = u16::from_be_bytes(self.tle[4..6].try_into().unwrap());
+        raw > self.get_num_file_slots()
+    }
+
+    pub fn get_next_offset(&self) -> u64 {
+        let mut buf = [0u8; 8];
+        buf[3..8].copy_from_slice(&self.tle[6..11]);
+        u64::from_be_bytes(buf)
     }
 
     pub fn get_filenos(&self) -> Vec<u16> {
@@ -86,6 +101,6 @@ impl TagLookupEntry {
     }
 
     pub fn calculate_needed_size(num_file_slots: u16) -> usize {
-        MIN_SIZE_BYTES + (num_file_slots as usize) * 2
+        BASE_SIZE_BYTES + (num_file_slots as usize) * 2
     }
 }

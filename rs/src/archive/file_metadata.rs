@@ -46,13 +46,13 @@ impl FileMetadata {
         }
 
         let mut fm =
-            Vec::with_capacity(MIN_SIZE_BYTES as usize + filename_len as usize + tag_vec_u8.len());
-        fm[0..5].copy_from_slice(&(length << 1 + (if valid { 1 } else { 0 })).to_be_bytes()[3..]);
-        fm[5..7].copy_from_slice(&fileno.to_be_bytes());
-        fm[7..9].copy_from_slice(&parent.to_be_bytes());
-        fm[9] = file_type;
-        fm[10] = filename.len() as u8;
-        fm[11..13].copy_from_slice(&(tags_len as u16).to_be_bytes());
+            Vec::with_capacity(BASE_SIZE_BYTES + tag_vec_u8.len() + filename_len as usize);
+        fm.extend_from_slice(&((length << 1) + (if valid { 1 } else { 0 })).to_be_bytes()[3..]); // 5 bytes
+        fm.extend_from_slice(&fileno.to_be_bytes());   // 2 bytes
+        fm.extend_from_slice(&parent.to_be_bytes());   // 2 bytes
+        fm.push(file_type);                             // 1 byte
+        fm.push(filename.len() as u8);                 // 1 byte
+        fm.extend_from_slice(&tags_len.to_be_bytes()); // 2 bytes
         fm.extend_from_slice(&tag_vec_u8);
         fm.extend_from_slice(filename.as_bytes());
 
@@ -110,7 +110,7 @@ impl FileMetadata {
     }
 
     pub fn size_bytes(&self) -> usize {
-        self.fm.len() * 2
+        self.fm.len()
     }
 
     pub fn calculate_needed_size(num_tags: u16, name_length: u8) -> usize {

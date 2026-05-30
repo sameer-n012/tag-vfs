@@ -17,14 +17,14 @@ impl TagDirectoryEntry {
         let mut name_bytes: [u8; 16] = [0; 16];
         name_bytes[0..name.len()].copy_from_slice(name.as_bytes());
 
-        tde[0..2].copy_from_slice(&(tagno << 1 + (if valid { 1 } else { 0 })).to_be_bytes());
+        tde[0..2].copy_from_slice(&((tagno << 1) + (if valid { 1 } else { 0 })).to_be_bytes());
         tde[2..18].copy_from_slice(&name_bytes);
         tde[18..23].copy_from_slice(&offset.to_be_bytes()[3..]);
         TagDirectoryEntry { tagno, tde }
     }
 
     pub fn get_tagno(&self) -> u16 {
-        self.tagno >> 1
+        self.tagno
     }
 
     pub fn is_valid(&self) -> bool {

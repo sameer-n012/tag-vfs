@@ -19,7 +19,8 @@ impl FileDirectoryEntry {
         offset: u64,
     ) -> Self {
         let mut fde = [0; SIZE_BYTES as usize];
-        fde[0..5].copy_from_slice(&(length << 1 + (if valid { 1 } else { 0 })).to_be_bytes()[3..]);
+        fde[0..5]
+            .copy_from_slice(&((length << 1) + (if valid { 1 } else { 0 })).to_be_bytes()[3..]);
         fde[5..7].copy_from_slice(&parent.to_be_bytes());
         fde[7..9].copy_from_slice(&filename_hash.to_be_bytes());
         fde[9..14].copy_from_slice(&offset.to_be_bytes()[3..]);

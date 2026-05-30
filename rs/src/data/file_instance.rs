@@ -4,13 +4,13 @@ use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
-struct FileInstance {
-    name: String,
-    file_type: FileType,
-    size: usize,
-    path: PathBuf,
-    parent: Option<PathBuf>,
-    tags: HashSet<String>,
+pub struct FileInstance {
+    pub name: String,
+    pub file_type: FileType,
+    pub size: usize,
+    pub path: PathBuf,
+    pub parent: Option<PathBuf>,
+    pub tags: HashSet<String>,
 }
 
 impl FileInstance {
@@ -51,7 +51,7 @@ impl FileInstance {
         Ok(buffer)
     }
 
-    fn open(&self) -> io::Result<()> {
+    pub fn open(&self) -> io::Result<()> {
         if cfg!(target_os = "windows") {
             std::process::Command::new("cmd")
                 .args(&["/C", "start", &self.path.to_string_lossy()])
