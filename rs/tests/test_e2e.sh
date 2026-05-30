@@ -49,10 +49,10 @@ echo "--- Phase 3: sz"
 OUT_SZ_ALL=$(run_vfs "sz")
 OUT_SZ_WORK=$(run_vfs "sz work")
 
-# Total size = 17 + 17 + 18 + 11 = 63 bytes
-assert_contains "p3 total sz" "$OUT_SZ_ALL" "63.0 B"
-# Work tag size = 17 (report) + 17 (notes) = 34 bytes
-assert_contains "p3 work sz"  "$OUT_SZ_WORK" "34.0 B"
+# Total size = 17 + 18 + 20 + 11 = 66 bytes
+assert_contains "p3 total sz" "$OUT_SZ_ALL" "66.0 B"
+# Work tag size = 17 (report) + 18 (notes) = 35 bytes
+assert_contains "p3 work sz"  "$OUT_SZ_WORK" "35.0 B"
 
 # ── Phase 4: Open, modify, and flush a file ───────────────────────────────────
 echo "--- Phase 4: flush with modification"

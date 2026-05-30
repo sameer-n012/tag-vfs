@@ -108,7 +108,7 @@ impl FileMetadata {
         let mut tags = Vec::with_capacity(self.num_tags as usize);
         for i in 0..self.num_tags {
             let mut buf = [0; 2];
-            buf.copy_from_slice(&self.fm[13 + i as usize * 2..]);
+            buf.copy_from_slice(&self.fm[13 + i as usize * 2..15 + i as usize * 2]);
             tags.push(u16::from_be_bytes(buf));
         }
         tags

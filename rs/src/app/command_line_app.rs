@@ -167,7 +167,9 @@ impl CommandLineApp {
      * @param args -f for filenames, -t for tags (tag filter not yet implemented).
      */
     fn cli_open(&mut self, args: ParsedArgs) -> bool {
-        if let Err(e) = self.app.am().open_files(args.filenames, args.tags) {
+        let mut names = args.positionals;
+        names.extend(args.filenames);
+        if let Err(e) = self.app.am().open_files(names, args.tags) {
             println!("Error: {}", e);
         }
         false

@@ -32,7 +32,9 @@ impl TagDirectoryEntry {
     }
 
     pub fn get_name(&self) -> String {
-        String::from_utf8_lossy(&self.tde[2..18]).to_string()
+        String::from_utf8_lossy(&self.tde[2..18])
+            .trim_end_matches('\0')
+            .to_string()
     }
 
     pub fn get_offset(&self) -> u64 {

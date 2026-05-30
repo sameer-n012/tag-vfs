@@ -307,16 +307,19 @@ impl Archive {
                 new_file.write(&byte_buf[0..bytes_read])?;
                 bytes_left -= bytes_read as u64;
             }
-            let file_length: u64 = new_file_storage_section_size
-                - self.file_storage_section_size
-                - file_metadata::MIN_SIZE_BYTES as u64
-                - file_end_metadata::SIZE_BYTES as u64;
-
-            let new_fm = file_metadata::FileMetadata::new(0, file_length, false, 0, 0, "", vec![]);
-            let new_fem = file_end_metadata::FileEndMetadata::new(file_length);
-            new_file.write(&new_fm.as_bytes())?;
-            Archive::_write_empty(&mut new_file, file_length)?;
-            new_file.write(&new_fem.as_bytes())?;
+            let extra = new_file_storage_section_size
+                .saturating_sub(self.file_storage_section_size);
+            let min_free: u64 = file_metadata::BASE_SIZE_BYTES as u64
+                + file_end_metadata::SIZE_BYTES as u64;
+            if extra > min_free {
+                let file_length = extra - min_free;
+                let new_fm =
+                    file_metadata::FileMetadata::new(0, file_length, false, 0, 0, "", vec![]);
+                let new_fem = file_end_metadata::FileEndMetadata::new(file_length);
+                new_file.write(&new_fm.as_bytes())?;
+                Archive::_write_empty(&mut new_file, file_length)?;
+                new_file.write(&new_fem.as_bytes())?;
+            }
 
             new_file.flush()?;
             self.file.rewind()?;
@@ -964,6 +967,8 @@ impl Archive {
 
         // Pass 2: find a free slot large enough for the new TLE, resizing once if needed.
         let find_free_slot = |mmap_mut: &MmapMut, section_offset: usize, section_size: u16| {
+            let needed =
+                tag_lookup_entry::TagLookupEntry::calculate_needed_size(new_num_file_slots);
             let mut bytes_read: usize = 0;
             while bytes_read + tag_lookup_entry::BASE_SIZE_BYTES < section_size as usize {
                 let buf: Vec<u8> = mmap_mut[section_offset + 4 + bytes_read
@@ -971,8 +976,19 @@ impl Archive {
                     .try_into()
                     .unwrap();
                 let tle = tag_lookup_entry::TagLookupEntry::from_bytes(buf);
-                if !tle.is_valid() && tle.get_num_file_slots() >= new_num_file_slots {
-                    return Some(bytes_read as u64);
+                if !tle.is_valid() {
+                    if tle.get_num_file_slots() >= new_num_file_slots {
+                        return Some(bytes_read as u64);
+                    }
+                    // num_file_slots == 0 means uninitialized/zeroed space; treat all
+                    // remaining bytes as one big free region.
+                    if tle.get_num_file_slots() == 0 {
+                        let remaining = section_size as usize - bytes_read;
+                        if remaining >= needed {
+                            return Some(bytes_read as u64);
+                        }
+                        break;
+                    }
                 }
                 bytes_read +=
                     tag_lookup_entry::BASE_SIZE_BYTES + tle.get_num_file_slots() as usize * 2;
@@ -1446,10 +1462,11 @@ impl Archive {
 
                 offset = next_offset;
             } else {
-                // Move to next file
-                offset += file_metadata::BASE_SIZE_BYTES
-                    + length
-                    + file_end_metadata::SIZE_BYTES as usize;
+                // Move to next file (must include variable-length FM parts)
+                let full_fm_size = file_metadata::BASE_SIZE_BYTES
+                    + fm.get_num_tags_count() as usize * 2
+                    + fm.get_filename_len() as usize;
+                offset += full_fm_size + length + file_end_metadata::SIZE_BYTES as usize;
             }
         }
         Ok(())
@@ -1495,7 +1512,13 @@ impl Archive {
                     ..section_start + prev_meta_start + file_metadata::BASE_SIZE_BYTES],
             );
             let prev_fm = file_metadata::FileMetadata::from_bytes(prev_meta_buf.clone());
-            if !prev_fm.is_valid() {
+            // A free block has filename_len == 0 and num_tags == 0; if either is non-zero
+            // the bytes at prev_meta_start are actually the middle of a valid file's FM
+            // (because the backward scan ignores variable-length FM parts), so skip the merge.
+            if !prev_fm.is_valid()
+                && prev_fm.get_filename_len() == 0
+                && prev_fm.get_num_tags_count() == 0
+            {
                 // Merge with current
                 let mut merge_start = prev_meta_start;
                 let mut merge_len = file_metadata::BASE_SIZE_BYTES
@@ -1805,6 +1828,8 @@ impl Archive {
         );
         let needed = new_fm_size + length as usize + file_end_metadata::SIZE_BYTES as usize;
         let mut new_offset: Option<usize> = None;
+        // Also track total available bytes at the chosen offset for remainder splitting.
+        let mut new_offset_available: usize = 0;
         let mut scan = 4usize; // skip 4-byte section header
         while scan + file_metadata::BASE_SIZE_BYTES < self.file_storage_section_size as usize {
             let scan_start = self.section_offset[FLST_S as usize] + scan;
@@ -1812,13 +1837,32 @@ impl Archive {
                 [scan_start..scan_start + file_metadata::BASE_SIZE_BYTES]
                 .to_vec();
             let scan_fm = file_metadata::FileMetadata::from_bytes(base);
-            let block_size = file_metadata::BASE_SIZE_BYTES
+            let full_fm_size = file_metadata::BASE_SIZE_BYTES
+                + scan_fm.get_num_tags_count() as usize * 2
+                + scan_fm.get_filename_len() as usize;
+            let block_size = full_fm_size
                 + scan_fm.get_length() as usize
                 + file_end_metadata::SIZE_BYTES as usize;
-            if !scan_fm.is_valid() && block_size >= needed {
-                new_offset = Some(scan);
-                break;
+            if !scan_fm.is_valid() {
+                // Zero/uninitialized block: treat all remaining space as one big free region.
+                if scan_fm.get_num_tags_count() == 0
+                    && scan_fm.get_filename_len() == 0
+                    && scan_fm.get_length() == 0
+                {
+                    let remaining = self.file_storage_section_size as usize - scan;
+                    if remaining >= needed {
+                        new_offset = Some(scan);
+                        new_offset_available = remaining;
+                    }
+                    break;
+                }
+                if block_size >= needed {
+                    new_offset = Some(scan);
+                    new_offset_available = block_size;
+                    break;
+                }
             }
+            if block_size == 0 { break; }
             scan += block_size;
         }
 
@@ -1831,13 +1875,31 @@ impl Archive {
                     [scan_start..scan_start + file_metadata::BASE_SIZE_BYTES]
                     .to_vec();
                 let scan_fm = file_metadata::FileMetadata::from_bytes(base);
-                let block_size = file_metadata::BASE_SIZE_BYTES
+                let full_fm_size = file_metadata::BASE_SIZE_BYTES
+                    + scan_fm.get_num_tags_count() as usize * 2
+                    + scan_fm.get_filename_len() as usize;
+                let block_size = full_fm_size
                     + scan_fm.get_length() as usize
                     + file_end_metadata::SIZE_BYTES as usize;
-                if !scan_fm.is_valid() && block_size >= needed {
-                    new_offset = Some(scan);
-                    break;
+                if !scan_fm.is_valid() {
+                    if scan_fm.get_num_tags_count() == 0
+                        && scan_fm.get_filename_len() == 0
+                        && scan_fm.get_length() == 0
+                    {
+                        let remaining = self.file_storage_section_size as usize - scan;
+                        if remaining >= needed {
+                            new_offset = Some(scan);
+                            new_offset_available = remaining;
+                        }
+                        break;
+                    }
+                    if block_size >= needed {
+                        new_offset = Some(scan);
+                        new_offset_available = block_size;
+                        break;
+                    }
                 }
+                if block_size == 0 { break; }
                 scan += block_size;
             }
             if new_offset.is_none() {
@@ -1861,6 +1923,7 @@ impl Archive {
             new_tags,
         );
         let fem = file_end_metadata::FileEndMetadata::new(length);
+        let used = new_fm.size_bytes() + length as usize + file_end_metadata::SIZE_BYTES as usize;
         let fm_start = self.section_offset[FLST_S as usize] + new_off;
         self.mmap_mut[fm_start..fm_start + new_fm.size_bytes()]
             .copy_from_slice(&new_fm.as_bytes());
@@ -1871,6 +1934,25 @@ impl Archive {
             .copy_from_slice(&fem.as_bytes());
         self.file_storage_section_size_used +=
             new_fm.size_bytes() as u64 + length + file_end_metadata::SIZE_BYTES as u64;
+
+        // Split remainder: write a free block for unused space after the new data.
+        const MIN_FREE: usize =
+            file_metadata::BASE_SIZE_BYTES + file_end_metadata::SIZE_BYTES as usize;
+        if new_offset_available > used + MIN_FREE {
+            let rem_data_len = (new_offset_available - used - MIN_FREE) as u64;
+            let rem_fm =
+                file_metadata::FileMetadata::new(0, rem_data_len, false, 0, 0, "", vec![]);
+            let rem_fem = file_end_metadata::FileEndMetadata::new(rem_data_len);
+            let rem_start = self.section_offset[FLST_S as usize] + new_off + used;
+            self.mmap_mut[rem_start..rem_start + rem_fm.size_bytes()]
+                .copy_from_slice(&rem_fm.as_bytes());
+            self.mmap_mut[rem_start + rem_fm.size_bytes() + rem_data_len as usize
+                ..rem_start
+                    + rem_fm.size_bytes()
+                    + rem_data_len as usize
+                    + file_end_metadata::SIZE_BYTES as usize]
+                .copy_from_slice(&rem_fem.as_bytes());
+        }
 
         // Update FDE offset field (bytes 9..14 of the FDE entry)
         let fde_base = self.section_offset[FLDR_S as usize]
@@ -2201,7 +2283,10 @@ impl Archive {
                 [scan_start..scan_start + file_metadata::BASE_SIZE_BYTES]
                 .to_vec();
             let scan_fm = file_metadata::FileMetadata::from_bytes(base);
-            let block_size = file_metadata::BASE_SIZE_BYTES
+            let full_fm_size = file_metadata::BASE_SIZE_BYTES
+                + scan_fm.get_num_tags_count() as usize * 2
+                + scan_fm.get_filename_len() as usize;
+            let block_size = full_fm_size
                 + scan_fm.get_length() as usize
                 + file_end_metadata::SIZE_BYTES as usize;
             if !scan_fm.is_valid() && block_size >= needed {
@@ -2220,7 +2305,10 @@ impl Archive {
                     [scan_start..scan_start + file_metadata::BASE_SIZE_BYTES]
                     .to_vec();
                 let scan_fm = file_metadata::FileMetadata::from_bytes(base);
-                let block_size = file_metadata::BASE_SIZE_BYTES
+                let full_fm_size = file_metadata::BASE_SIZE_BYTES
+                    + scan_fm.get_num_tags_count() as usize * 2
+                    + scan_fm.get_filename_len() as usize;
+                let block_size = full_fm_size
                     + scan_fm.get_length() as usize
                     + file_end_metadata::SIZE_BYTES as usize;
                 if !scan_fm.is_valid() && block_size >= needed {
