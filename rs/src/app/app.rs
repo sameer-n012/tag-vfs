@@ -21,7 +21,12 @@ impl App {
     }
 
     fn initialize_app(&mut self) {
-        println!("Initializing App...");
+        use crate::util::style;
+        style::init();
+        let name = self.config.get_app_name_pretty();
+        println!();
+        println!("  {}  {}", style::bold_cyan(&name), style::dim("· type 'help' for available commands"));
+        println!();
         self.setup_app_directory();
     }
 

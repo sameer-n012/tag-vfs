@@ -1,4 +1,5 @@
 use crate::data::file_type::FileType;
+use crate::util::style;
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{self, Read};
@@ -99,11 +100,7 @@ impl FileInstance {
 
 impl ToString for FileInstance {
     fn to_string(&self) -> String {
-        format!(
-            "{}{} ({})",
-            self.name,
-            if self.is_directory() { "/" } else { "" },
-            self.get_formatted_size()
-        )
+        let name = format!("{}{}", self.name, if self.is_directory() { "/" } else { "" });
+        format!("{} {}", style::bold(&name), style::dim(&format!("({})", self.get_formatted_size())))
     }
 }

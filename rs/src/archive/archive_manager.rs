@@ -3,6 +3,7 @@ use crate::archive::archive::Archive;
 use crate::archive::tag_lookup_entry;
 use crate::data::file_instance::FileInstance;
 use crate::util::named_file::NamedFile;
+use crate::util::style;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, ErrorKind};
@@ -14,7 +15,7 @@ const INITIAL_TAG_DIR_SLOTS: u16 = 256;
 const INITIAL_TAG_LOOKUP_SLOTS: u16 = 1024;
 const INITIAL_TAG_LOOKUP_SPACE_BYTES: usize =
     INITIAL_TAG_LOOKUP_SLOTS as usize * tag_lookup_entry::MIN_SIZE_BYTES;
-const INITIAL_FILE_STORAGE_SPACE_BYTES: usize = 1024 * 1024; // 1 MB (use larger value for prod)
+const INITIAL_FILE_STORAGE_SPACE_BYTES: usize = 1024 * 1024 * 1024; // 1 GB
 
 // Collects all filenos that satisfy both the filename and tag filters (AND semantics).
 // Files must have ALL listed tags and match ANY listed filename.
@@ -89,10 +90,10 @@ fn expand_archive(archive: &mut Archive, dest: &Path) -> io::Result<()> {
         };
         let out_path = dest.join(&fi.name);
         fs::write(&out_path, &data)?;
-        println!("Expanded {} -> {}", fi.name, out_path.display());
+        println!("  {} {} {}", style::bold(&fi.name), style::dim("→"), style::dim(&out_path.display().to_string()));
         count += 1;
     }
-    println!("Expanded {} file(s) to {}", count, dest.display());
+    println!("{} {} file(s) to {}", style::green("Expanded"), count, style::bold(&dest.display().to_string()));
     return Ok(());
 }
 
@@ -104,7 +105,11 @@ fn format_size(bytes: u64) -> String {
     let units = ["B", "kB", "MB", "GB", "TB"];
     let exp = ((bytes as f64).log10() / (1024_f64).log10()) as usize;
     let exp = exp.min(units.len() - 1);
-    format!("{:.1} {}", bytes as f64 / 1024_f64.powi(exp as i32), units[exp])
+    format!(
+        "{:.1} {}",
+        bytes as f64 / 1024_f64.powi(exp as i32),
+        units[exp]
+    )
 }
 
 pub struct ArchiveManager {
@@ -142,15 +147,19 @@ impl ArchiveManager {
     }
 
     pub fn read_archive_file(&mut self, path: String) -> io::Result<()> {
-        let file = std::fs::OpenOptions::new().read(true).write(true).open(path.clone())?;
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path.clone())?;
         self.archive = Archive::new(NamedFile::new(file, path)).ok();
         return Ok(());
     }
 
     pub fn open(&mut self, filename: String) -> io::Result<()> {
-        let archive = self.archive.as_mut().ok_or_else(|| {
-            io::Error::new(ErrorKind::Other, "No archive loaded")
-        })?;
+        let archive = self
+            .archive
+            .as_mut()
+            .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
 
         let fdes = archive.get_fde_by_filename(filename.clone())?;
         let fde = fdes.into_iter().find(|f| f.is_valid()).ok_or_else(|| {
@@ -175,10 +184,15 @@ impl ArchiveManager {
         let file = File::open(&dest_path)?;
         let dest_str = dest_path.to_string_lossy().to_string();
         let named = NamedFile::new(file, dest_str.clone());
-        let next_key = self.open_files.keys().max().map(|k| k.saturating_add(1)).unwrap_or(1);
+        let next_key = self
+            .open_files
+            .keys()
+            .max()
+            .map(|k| k.saturating_add(1))
+            .unwrap_or(1);
         self.open_files.insert(next_key, named);
 
-        println!("Opening {} ...", dest_str);
+        println!("{} {} ...", style::dim("Opening"), style::bold(&dest_str));
         file_instance.path = dest_path;
         return file_instance.open();
     }
@@ -186,9 +200,10 @@ impl ArchiveManager {
     pub fn open_files(&mut self, filenames: Vec<String>, tags: Vec<String>) -> io::Result<()> {
         if !tags.is_empty() {
             // Tag filter: find matching filenos, collect names, then open each
-            let archive = self.archive.as_mut().ok_or_else(|| {
-                io::Error::new(ErrorKind::Other, "No archive loaded")
-            })?;
+            let archive = self
+                .archive
+                .as_mut()
+                .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
             let filenos = collect_matching_filenos(archive, &filenames, &tags)?;
             let mut names: Vec<String> = Vec::new();
             for fileno in filenos {
@@ -231,7 +246,7 @@ impl ArchiveManager {
             .to_os_string();
 
         let dest_path = cache_dir.join(file_name);
-        println!("Caching {} into {}", filename, dest_path.display());
+        println!("{} {} ...", style::dim("Caching"), style::bold(&filename));
         fs::copy(src_path, &dest_path)?;
         let file = File::open(&dest_path)?;
         let named = NamedFile::new(file, dest_path.to_string_lossy().to_string());
@@ -245,10 +260,7 @@ impl ArchiveManager {
         self.open_files.insert(next_fileno, named);
 
         if open {
-            println!(
-                "Open flag set for {}; opening is not implemented yet",
-                filename
-            );
+            println!("{} open flag set for {}; not yet implemented", style::dim("Note:"), filename);
         }
 
         Ok(())
@@ -262,7 +274,12 @@ impl ArchiveManager {
         let name_filter: Option<HashSet<String>> = if filenames.is_empty() {
             None
         } else {
-            Some(filenames.into_iter().map(|n| n.to_ascii_lowercase()).collect())
+            Some(
+                filenames
+                    .into_iter()
+                    .map(|n| n.to_ascii_lowercase())
+                    .collect(),
+            )
         };
 
         // Collect candidates by filename filter (no archive needed yet)
@@ -288,9 +305,10 @@ impl ArchiveManager {
         let work: Vec<(u16, String, String)> = if tags.is_empty() {
             candidates
         } else {
-            let archive = self.archive.as_mut().ok_or_else(|| {
-                io::Error::new(ErrorKind::Other, "No archive loaded")
-            })?;
+            let archive = self
+                .archive
+                .as_mut()
+                .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
             let mut tag_nos: Vec<u16> = Vec::new();
             for tagname in &tags {
                 match archive.get_tde_from_tagname(tagname.clone())? {
@@ -300,7 +318,9 @@ impl ArchiveManager {
             }
             let mut filtered = Vec::new();
             for item in candidates {
-                let fdes = archive.get_fde_by_filename(item.2.clone()).unwrap_or_default();
+                let fdes = archive
+                    .get_fde_by_filename(item.2.clone())
+                    .unwrap_or_default();
                 if let Some(fde) = fdes.into_iter().find(|f| f.is_valid()) {
                     if let Ok(fm) = archive.get_fm(fde.get_offset()) {
                         let file_tags = fm.get_tags();
@@ -323,21 +343,22 @@ impl ArchiveManager {
         for (_, cached_path, file_name) in &work {
             let new_data = fs::read(cached_path)?;
 
-            let archive = self.archive.as_mut().ok_or_else(|| {
-                io::Error::new(ErrorKind::Other, "No archive loaded")
-            })?;
+            let archive = self
+                .archive
+                .as_mut()
+                .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
 
             let fdes = archive.get_fde_by_filename(file_name.clone())?;
             if let Some(fde) = fdes.into_iter().find(|f| f.is_valid()) {
                 let changed = archive.update_file_data(fde.get_fileno(), new_data)?;
                 if changed {
-                    println!("Flushed updated {}", file_name);
+                    println!("{} {}", style::green("Flushed"), style::bold(file_name));
                 } else {
-                    println!("No changes detected in {}", file_name);
+                    println!("{}", style::dim(&format!("No changes in {}", file_name)));
                 }
             } else {
                 archive.add_file(FileInstance::new(cached_path, None, None))?;
-                println!("Added new file {} to archive", file_name);
+                println!("{} {} to archive", style::green("Added"), style::bold(file_name));
             }
         }
 
@@ -372,9 +393,7 @@ impl ArchiveManager {
         let mut removed = Vec::new();
         for (&fileno, named) in self.open_files.iter() {
             if let Some(name) = Path::new(&named.path).file_name().and_then(|n| n.to_str()) {
-                println!("destroy candidate: {}", name);
                 if filter.contains(&name.to_ascii_lowercase()) {
-                    println!("destroy matched {}", name);
                     removed.push((fileno, named.path.clone()));
                 }
             }
@@ -429,9 +448,10 @@ impl ArchiveManager {
         if filenames.is_empty() && tags.is_empty() {
             return Ok(());
         }
-        let archive = self.archive.as_mut().ok_or_else(|| {
-            io::Error::new(ErrorKind::Other, "No archive loaded")
-        })?;
+        let archive = self
+            .archive
+            .as_mut()
+            .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
 
         let filenos = collect_matching_filenos(archive, &filenames, &tags)?;
         for fileno in filenos {
@@ -461,9 +481,10 @@ impl ArchiveManager {
             }
         }
 
-        let archive = self.archive.as_mut().ok_or_else(|| {
-            io::Error::new(ErrorKind::Other, "No archive loaded")
-        })?;
+        let archive = self
+            .archive
+            .as_mut()
+            .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
         for path_str in all_paths {
             archive.add_file(FileInstance::new(&path_str, None, None))?;
         }
@@ -482,9 +503,10 @@ impl ArchiveManager {
         if filenames.is_empty() || tags.is_empty() {
             return Ok(());
         }
-        let archive = self.archive.as_mut().ok_or_else(|| {
-            io::Error::new(ErrorKind::Other, "No archive loaded")
-        })?;
+        let archive = self
+            .archive
+            .as_mut()
+            .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
 
         // Resolve tag names to tagnos, creating missing tags
         let mut tagnos: Vec<u16> = Vec::new();
@@ -495,9 +517,7 @@ impl ArchiveManager {
                     archive.add_tag(tagname.clone())?;
                     archive
                         .get_tde_from_tagname(tagname.clone())?
-                        .ok_or_else(|| {
-                            io::Error::new(ErrorKind::Other, "Failed to create tag")
-                        })?
+                        .ok_or_else(|| io::Error::new(ErrorKind::Other, "Failed to create tag"))?
                         .get_tagno()
                 }
             };
@@ -538,9 +558,10 @@ impl ArchiveManager {
         if filenames.is_empty() || tags.is_empty() {
             return Ok(());
         }
-        let archive = self.archive.as_mut().ok_or_else(|| {
-            io::Error::new(ErrorKind::Other, "No archive loaded")
-        })?;
+        let archive = self
+            .archive
+            .as_mut()
+            .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
 
         // Resolve tag names, skipping unknown tags
         let mut tagnos: Vec<u16> = Vec::new();
@@ -585,9 +606,10 @@ impl ArchiveManager {
      * @return io::Result<()> indicating success or failure.
      */
     pub fn list_files(&mut self, tags: Vec<String>) -> io::Result<()> {
-        let archive = self.archive.as_mut().ok_or_else(|| {
-            io::Error::new(ErrorKind::Other, "No archive loaded")
-        })?;
+        let archive = self
+            .archive
+            .as_mut()
+            .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
 
         let filenos: Vec<u16> = if tags.is_empty() {
             (0..archive.num_file_dir_slots())
@@ -617,9 +639,10 @@ impl ArchiveManager {
      * @return io::Result<()> indicating success or failure.
      */
     pub fn size_of(&mut self, tags: Vec<String>) -> io::Result<()> {
-        let archive = self.archive.as_mut().ok_or_else(|| {
-            io::Error::new(ErrorKind::Other, "No archive loaded")
-        })?;
+        let archive = self
+            .archive
+            .as_mut()
+            .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
 
         let filenos: Vec<u16> = if tags.is_empty() {
             (0..archive.num_file_dir_slots())
@@ -666,7 +689,10 @@ impl ArchiveManager {
      */
     pub fn merge(&mut self, path: String) -> io::Result<()> {
         // Phase 1: open source archive and collect all valid files.
-        let src_file = OpenOptions::new().read(true).write(true).open(path.clone())?;
+        let src_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path.clone())?;
         let mut src = Archive::new(NamedFile::new(src_file, path))?;
 
         let num_slots = src.num_file_dir_slots();
@@ -690,9 +716,10 @@ impl ArchiveManager {
         let cache_dir_path = self.run_config.get_cache_path_absolute();
         fs::create_dir_all(&cache_dir_path)?;
 
-        let archive = self.archive.as_mut().ok_or_else(|| {
-            io::Error::new(ErrorKind::Other, "No archive loaded")
-        })?;
+        let archive = self
+            .archive
+            .as_mut()
+            .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
 
         for (name, data, tags) in &collected {
             // Ensure all source tags exist in the current archive.
@@ -711,7 +738,7 @@ impl ArchiveManager {
             archive.add_file(fi)?;
 
             let _ = fs::remove_file(&temp_path);
-            println!("Merged {}", name);
+            println!("{} {}", style::green("Merged"), style::bold(&name));
         }
 
         return Ok(());
@@ -726,7 +753,10 @@ impl ArchiveManager {
      * @return io::Result<()> indicating success or failure.
      */
     pub fn expand_from(&mut self, destination: String, path: String) -> io::Result<()> {
-        let src_file = OpenOptions::new().read(true).write(true).open(path.clone())?;
+        let src_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path.clone())?;
         let mut src = Archive::new(NamedFile::new(src_file, path))?;
         return expand_archive(&mut src, Path::new(&destination));
     }
@@ -738,9 +768,10 @@ impl ArchiveManager {
      * @return io::Result<()> indicating success or failure.
      */
     pub fn expand(&mut self, destination: String) -> io::Result<()> {
-        let archive = self.archive.as_mut().ok_or_else(|| {
-            io::Error::new(ErrorKind::Other, "No archive loaded")
-        })?;
+        let archive = self
+            .archive
+            .as_mut()
+            .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
         return expand_archive(archive, Path::new(&destination));
     }
 
@@ -822,7 +853,11 @@ mod tests {
 
         // Create archive in a separate temp dir to avoid dirs::home_dir() ambiguity
         let archive_dir = TempDir::new()?;
-        let archive_path = archive_dir.path().join("archive.dat").to_string_lossy().to_string();
+        let archive_path = archive_dir
+            .path()
+            .join("archive.dat")
+            .to_string_lossy()
+            .to_string();
         manager.create_archive_file(archive_path)?;
 
         let source = TempDir::new()?;
@@ -878,7 +913,11 @@ mod tests {
         let mut manager = ArchiveManager::new(Arc::clone(&rc));
 
         let archive_dir = TempDir::new()?;
-        let archive_path = archive_dir.path().join("archive.dat").to_string_lossy().to_string();
+        let archive_path = archive_dir
+            .path()
+            .join("archive.dat")
+            .to_string_lossy()
+            .to_string();
         manager.create_archive_file(archive_path)?;
 
         // Import a file into the archive
@@ -906,7 +945,11 @@ mod tests {
         let mut manager = ArchiveManager::new(Arc::clone(&rc));
 
         let archive_dir = TempDir::new()?;
-        let archive_path = archive_dir.path().join("archive.dat").to_string_lossy().to_string();
+        let archive_path = archive_dir
+            .path()
+            .join("archive.dat")
+            .to_string_lossy()
+            .to_string();
         manager.create_archive_file(archive_path)?;
 
         let source = TempDir::new()?;

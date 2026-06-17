@@ -1,5 +1,6 @@
 use crate::app::app::App;
 use crate::app::run_configuration::RunConfiguration;
+use crate::util::style;
 use std::collections::HashSet;
 use std::io::{self, Write};
 
@@ -72,7 +73,7 @@ impl CommandLineApp {
         let mut input = String::new();
 
         loop {
-            print!("{} ", self.app.config.get_config_string("cliPrefix"));
+            print!("{} ", style::prompt());
             stdout.flush().unwrap();
             let bytes = stdin.read_line(&mut input).unwrap();
             if bytes == 0 {
@@ -120,7 +121,8 @@ impl CommandLineApp {
             "apply"   => self.cli_apply(args),
             "scrape"  => self.cli_scrape(args),
             _ => {
-                println!("Unknown command: {}. Type 'help' for more.", cmd);
+                println!("{} '{}'. Type {} for available commands.",
+                    style::bold_red("Unknown command:"), cmd, style::bold_cyan("help"));
                 false
             }
         }
@@ -140,23 +142,32 @@ impl CommandLineApp {
     }
 
     fn cli_help(&self) -> bool {
-        println!("Commands:");
-        println!("  open [-f <file> ...] [-t <tag> ...]             open files with system viewer");
-        println!("  import <file> ... [-r]                          import files into the archive");
-        println!("  remove -f <file> ... -t <tag> ...               remove files from the archive");
-        println!("  tag -f <file> ... -t <tag> ... [-d]             add (or -d: remove) tags");
-        println!("  ls [<tag> ...]                                   list files with all given tags");
-        println!("  sz [<tag> ...]                                   combined size of matching files");
-        println!("  flush [-f <file> ...] [-t <tag> ...] [-a] [-d]  write cached files to archive");
-        println!("  destroy [-f <file> ...] [-t <tag> ...] [-a]     discard cached files");
-        println!("  expand <dest> [-f <src.dat>]                    expand archive to a directory");
-        println!("  reduce <file> ... [-r]                          compress files into archive");
-        println!("  merge <file.dat>                                merge archive into this one");
-        println!("  config <key> <value> [-p] [-l]                  set or list config values");
-        println!("  apply <script> [-f <file> ...] [-t <tag> ...]   apply script to files");
-        println!("  scrape [-f <file> ...] [-t <tag> ...]           scrape link files");
-        println!("  help                                             show this help text");
-        println!("  quit                                             quit the application");
+        // Each entry: (name, args, description). Name is padded to 8 chars visually.
+        let entries: &[(&str, &str, &str)] = &[
+            ("open",    "[-f <file> ...] [-t <tag> ...]            ", "open files with system viewer"),
+            ("import",  "<file> ... [-r]                           ", "import files into the archive"),
+            ("remove",  "-f <file> ... -t <tag> ...                ", "remove files from the archive"),
+            ("tag",     "-f <file> ... -t <tag> ... [-d]           ", "add (or -d: remove) tags"),
+            ("ls",      "[<tag> ...]                                ", "list files with all given tags"),
+            ("sz",      "[<tag> ...]                                ", "combined size of matching files"),
+            ("flush",   "[-f <file> ...] [-t <tag> ...] [-a] [-d]  ", "write cached files to archive"),
+            ("destroy", "[-f <file> ...] [-t <tag> ...] [-a]       ", "discard cached files"),
+            ("expand",  "<dest> [-f <src.dat>]                     ", "expand archive to a directory"),
+            ("reduce",  "<file> ... [-r]                           ", "compress files into archive"),
+            ("merge",   "<file.dat>                                ", "merge archive into this one"),
+            ("config",  "<key> <value> [-p] [-l]                   ", "set or list config values"),
+            ("apply",   "<script> [-f <file> ...] [-t <tag> ...]   ", "apply script to files"),
+            ("scrape",  "[-f <file> ...] [-t <tag> ...]            ", "scrape link files"),
+            ("help",    "                                           ", "show this help text"),
+            ("quit",    "                                           ", "quit the application"),
+        ];
+        println!("{}", style::bold("Commands:"));
+        for (name, args, desc) in entries {
+            // Pad visually: name.len() chars wide, then rest is literal string
+            let pad = " ".repeat(9usize.saturating_sub(name.len()));
+            println!("  {}{}{}{}",
+                style::bold_cyan(name), pad, args, style::dim(desc));
+        }
         false
     }
 
@@ -170,7 +181,7 @@ impl CommandLineApp {
         let mut names = args.positionals;
         names.extend(args.filenames);
         if let Err(e) = self.app.am().open_files(names, args.tags) {
-            println!("Error: {}", e);
+            println!("{} {}", style::bold_red("Error:"), e);
         }
         false
     }
@@ -187,7 +198,7 @@ impl CommandLineApp {
             return false;
         }
         if let Err(e) = self.app.am().import_files(args.positionals, recursive) {
-            println!("Error: {}", e);
+            println!("{} {}", style::bold_red("Error:"), e);
         }
         false
     }
@@ -203,7 +214,7 @@ impl CommandLineApp {
             return false;
         }
         if let Err(e) = self.app.am().remove(args.filenames, args.tags) {
-            println!("Error: {}", e);
+            println!("{} {}", style::bold_red("Error:"), e);
         }
         false
     }
@@ -224,7 +235,7 @@ impl CommandLineApp {
             self.app.am().add_tags(args.filenames, args.tags)
         };
         if let Err(e) = result {
-            println!("Error: {}", e);
+            println!("{} {}", style::bold_red("Error:"), e);
         }
         false
     }
@@ -238,7 +249,7 @@ impl CommandLineApp {
     fn cli_list(&mut self, args: ParsedArgs) -> bool {
         let tags = if !args.positionals.is_empty() { args.positionals } else { args.tags };
         if let Err(e) = self.app.am().list_files(tags) {
-            println!("Error: {}", e);
+            println!("{} {}", style::bold_red("Error:"), e);
         }
         false
     }
@@ -252,7 +263,7 @@ impl CommandLineApp {
     fn cli_size(&mut self, args: ParsedArgs) -> bool {
         let tags = if !args.positionals.is_empty() { args.positionals } else { args.tags };
         if let Err(e) = self.app.am().size_of(tags) {
-            println!("Error: {}", e);
+            println!("{} {}", style::bold_red("Error:"), e);
         }
         false
     }
@@ -271,7 +282,7 @@ impl CommandLineApp {
             self.app.am().flush(args.filenames.clone(), args.tags.clone())
         };
         if let Err(e) = result {
-            println!("Error: {}", e);
+            println!("{} {}", style::bold_red("Error:"), e);
             return false;
         }
         if destroy_after {
@@ -281,7 +292,7 @@ impl CommandLineApp {
                 self.app.am().destroy(args.filenames, args.tags)
             };
             if let Err(e) = result {
-                println!("Error: {}", e);
+                println!("{} {}", style::bold_red("Error:"), e);
             }
         }
         false
@@ -304,7 +315,7 @@ impl CommandLineApp {
             self.app.am().destroy(args.filenames, args.tags)
         };
         if let Err(e) = result {
-            println!("Error: {}", e);
+            println!("{} {}", style::bold_red("Error:"), e);
         }
         false
     }
@@ -328,7 +339,7 @@ impl CommandLineApp {
             None => self.app.am().expand(dest),
         };
         if let Err(e) = result {
-            println!("Error: {}", e);
+            println!("{} {}", style::bold_red("Error:"), e);
         }
         false
     }
@@ -345,7 +356,7 @@ impl CommandLineApp {
             return false;
         }
         if let Err(e) = self.app.am().reduce(args.positionals, recursive) {
-            println!("Error: {}", e);
+            println!("{} {}", style::bold_red("Error:"), e);
         }
         false
     }
@@ -364,7 +375,7 @@ impl CommandLineApp {
             }
         };
         if let Err(e) = self.app.am().merge(path) {
-            println!("Error: {}", e);
+            println!("{} {}", style::bold_red("Error:"), e);
         }
         false
     }
@@ -407,7 +418,7 @@ impl CommandLineApp {
             }
         };
         if let Err(e) = self.app.am().apply(args.filenames, args.tags, script) {
-            println!("Error: {}", e);
+            println!("{} {}", style::bold_red("Error:"), e);
         }
         false
     }
@@ -420,7 +431,7 @@ impl CommandLineApp {
      */
     fn cli_scrape(&mut self, args: ParsedArgs) -> bool {
         if let Err(e) = self.app.am().scrape(args.filenames, args.tags) {
-            println!("Error: {}", e);
+            println!("{} {}", style::bold_red("Error:"), e);
         }
         false
     }
