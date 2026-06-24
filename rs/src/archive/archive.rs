@@ -1487,6 +1487,11 @@ impl Archive {
         self.num_file_dir_slots
     }
 
+    /// Returns the total number of tag directory slots.
+    pub fn num_tag_dir_slots(&self) -> u32 {
+        self.num_tag_dir_slots
+    }
+
     /// Returns all file numbers for a given tag number.
     pub fn _get_all_filenos_for_tag(&self, tagno: u32) -> io::Result<Vec<u32>> {
         let mut filenos = Vec::new();

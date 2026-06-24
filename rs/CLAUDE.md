@@ -129,6 +129,8 @@ All commands except `apply` and `scrape` are fully implemented end-to-end:
 | `remove` | by `-f` filename and/or `-t` tag (AND semantics) |
 | `tag`    | add or `-d` remove tags from matching files |
 | `ls`     | list files; optional positional tag filters (AND) |
+| `lt`     | list all tags in the archive with file counts per tag |
+| `stat`   | show metadata for a named file: size, type, all tags |
 | `sz`     | combined size of matching files |
 | `open`   | extract to session cache, launch system viewer |
 | `flush`  | write cached files back to archive; change-detection skips unchanged |

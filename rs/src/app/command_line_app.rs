@@ -118,6 +118,8 @@ impl CommandLineApp {
             "reduce"  => self.cli_reduce(args),
             "merge"   => self.cli_merge(args),
             "config"  => self.cli_config(args),
+            "lt"      => self.cli_list_tags(),
+            "stat"    => self.cli_stat(args),
             "apply"   => self.cli_apply(args),
             "scrape"  => self.cli_scrape(args),
             _ => {
@@ -149,6 +151,8 @@ impl CommandLineApp {
             ("remove",  "-f <file> ... -t <tag> ...                ", "remove files from the archive"),
             ("tag",     "-f <file> ... -t <tag> ... [-d]           ", "add (or -d: remove) tags"),
             ("ls",      "[<tag> ...]                                ", "list files with all given tags"),
+            ("lt",      "                                           ", "list all tags with file counts"),
+            ("stat",    "<file>                                     ", "show file metadata and tags"),
             ("sz",      "[<tag> ...]                                ", "combined size of matching files"),
             ("flush",   "[-f <file> ...] [-t <tag> ...] [-a] [-d]  ", "write cached files to archive"),
             ("destroy", "[-f <file> ...] [-t <tag> ...] [-a]       ", "discard cached files"),
@@ -400,6 +404,37 @@ impl CommandLineApp {
             args.positionals[1].clone(),
             persist,
         );
+        false
+    }
+
+    /**
+     * Lists all tags in the archive with their file counts.
+     */
+    fn cli_list_tags(&mut self) -> bool {
+        if let Err(e) = self.app.am().list_tags() {
+            println!("{} {}", style::bold_red("Error:"), e);
+        }
+        false
+    }
+
+    /**
+     * Prints metadata for a named file in the archive.
+     *
+     * @param args positional filename (or -f <filename>).
+     */
+    fn cli_stat(&mut self, args: ParsedArgs) -> bool {
+        let filename = match args.positionals.into_iter().next()
+            .or_else(|| args.filenames.into_iter().next())
+        {
+            Some(f) => f,
+            None => {
+                println!("Usage: stat <filename>");
+                return false;
+            }
+        };
+        if let Err(e) = self.app.am().stat_file(filename) {
+            println!("{} {}", style::bold_red("Error:"), e);
+        }
         false
     }
 

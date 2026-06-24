@@ -33,6 +33,8 @@ Sub-points indicate optional arguments
   - `-a` writes all files that have been updated (overrides `-f`, `-t`)
   - `-d` destroys the cached files after flushing all updates
 - `ls <tag1> ...` lists all files with the given set of tags
+- `lt` lists all tags in the archive with their file counts
+- `stat <file>` shows metadata for a named file (size, type, tags)
 - `sz <tag1> ...` lists the combined size of all files with given tags
 - `remove -f <file1> ... -t <tag1> ...` removes the files with the given filenames and tags from the `.dat` storage file
 - `tag -f <file1> ... -t <tag1> ...` adds a set of tags to a set of files

@@ -665,6 +665,90 @@ impl ArchiveManager {
         Ok(())
     }
 
+    /*
+     * Lists all tags in the archive, printing each tag name along with the
+     * number of files that have that tag.
+     *
+     * @return io::Result<()> indicating success or failure.
+     */
+    pub fn list_tags(&mut self) -> io::Result<()> {
+        let archive = self
+            .archive
+            .as_mut()
+            .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
+
+        let mut count = 0u32;
+        for tagno in 0..archive.num_tag_dir_slots() {
+            let tde = archive.get_tde(tagno)?;
+            if !tde.is_valid() {
+                continue;
+            }
+            let filenos = archive._get_all_filenos_for_tag(tagno)?;
+            let file_count = filenos.len();
+            println!("{} {}",
+                style::bold_cyan(&tde.get_name()),
+                style::dim(&format!("({} file{})", file_count, if file_count == 1 { "" } else { "s" })));
+            count += 1;
+        }
+        if count == 0 {
+            println!("{}", style::dim("No tags in archive."));
+        }
+        return Ok(());
+    }
+
+    /*
+     * Prints metadata for every file in the archive that matches the given
+     * filename. Shows size, file type, parent, and all associated tags.
+     *
+     * @param filename the filename to look up.
+     * @return io::Result<()> indicating success or failure.
+     */
+    pub fn stat_file(&mut self, filename: String) -> io::Result<()> {
+        let archive = self
+            .archive
+            .as_mut()
+            .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
+
+        let fdes = archive.get_fde_by_filename(filename.clone())?;
+        let valid_fdes: Vec<_> = fdes.into_iter().filter(|f| f.is_valid()).collect();
+        if valid_fdes.is_empty() {
+            return Err(io::Error::new(
+                ErrorKind::NotFound,
+                format!("File not found in archive: {}", filename),
+            ));
+        }
+
+        for fde in valid_fdes {
+            let fileno = fde.get_fileno();
+            let fm = archive.get_fm(fde.get_offset())?;
+
+            let tag_names: Vec<String> = fm
+                .get_tags()
+                .iter()
+                .filter_map(|&tagno| archive.get_tde(tagno).ok())
+                .filter(|tde| tde.is_valid())
+                .map(|tde| tde.get_name())
+                .collect();
+
+            let file_type_str = match fm.get_file_type() {
+                1 => "directory",
+                2 => "file",
+                _ => "unknown",
+            };
+
+            println!("{}", style::bold(&fm.get_filename()));
+            println!("  {}  {}", style::dim("fileno:"), style::bold(&fileno.to_string()));
+            println!("  {}    {}", style::dim("size:"), style::bold(&format_size(fm.get_length())));
+            println!("  {}    {}", style::dim("type:"), file_type_str);
+            if !tag_names.is_empty() {
+                println!("  {}    {}", style::dim("tags:"), tag_names.join(", "));
+            } else {
+                println!("  {}    {}", style::dim("tags:"), style::dim("(none)"));
+            }
+        }
+        return Ok(());
+    }
+
     pub fn apply(
         &self,
         _filenames: Vec<String>,
