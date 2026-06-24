@@ -10,9 +10,9 @@ use std::io::{self, ErrorKind};
 use std::path::Path;
 use std::sync::Arc;
 
-const INITIAL_FILE_DIR_SLOTS: u16 = 1024;
-const INITIAL_TAG_DIR_SLOTS: u16 = 256;
-const INITIAL_TAG_LOOKUP_SLOTS: u16 = 1024;
+const INITIAL_FILE_DIR_SLOTS: u32 = 1024;
+const INITIAL_TAG_DIR_SLOTS: u32 = 256;
+const INITIAL_TAG_LOOKUP_SLOTS: u32 = 1024;
 const INITIAL_TAG_LOOKUP_SPACE_BYTES: usize =
     INITIAL_TAG_LOOKUP_SLOTS as usize * tag_lookup_entry::MIN_SIZE_BYTES;
 const INITIAL_FILE_STORAGE_SPACE_BYTES: usize = 1024 * 1024 * 1024; // 1 GB
@@ -24,11 +24,11 @@ fn collect_matching_filenos(
     archive: &mut Archive,
     filenames: &[String],
     tags: &[String],
-) -> io::Result<Vec<u16>> {
-    let mut candidates: Option<HashSet<u16>> = None;
+) -> io::Result<Vec<u32>> {
+    let mut candidates: Option<HashSet<u32>> = None;
 
     for tagname in tags {
-        let set: HashSet<u16> = match archive.get_tde_from_tagname(tagname.clone())? {
+        let set: HashSet<u32> = match archive.get_tde_from_tagname(tagname.clone())? {
             None => return Ok(Vec::new()), // tag doesn't exist → no matches
             Some(tde) => archive
                 ._get_all_filenos_for_tag(tde.get_tagno())?
@@ -42,7 +42,7 @@ fn collect_matching_filenos(
     }
 
     if !filenames.is_empty() {
-        let mut name_set: HashSet<u16> = HashSet::new();
+        let mut name_set: HashSet<u32> = HashSet::new();
         for filename in filenames {
             for fde in archive.get_fde_by_filename(filename.clone())? {
                 if fde.is_valid() {
@@ -309,7 +309,7 @@ impl ArchiveManager {
                 .archive
                 .as_mut()
                 .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
-            let mut tag_nos: Vec<u16> = Vec::new();
+            let mut tag_nos: Vec<u32> = Vec::new();
             for tagname in &tags {
                 match archive.get_tde_from_tagname(tagname.clone())? {
                     Some(tde) => tag_nos.push(tde.get_tagno()),
@@ -323,7 +323,7 @@ impl ArchiveManager {
                     .unwrap_or_default();
                 if let Some(fde) = fdes.into_iter().find(|f| f.is_valid()) {
                     if let Ok(fm) = archive.get_fm(fde.get_offset()) {
-                        let file_tags = fm.get_tags();
+                        let file_tags: Vec<u32> = fm.get_tags();
                         if tag_nos.iter().all(|t| file_tags.contains(t)) {
                             filtered.push(item);
                         }
@@ -509,7 +509,7 @@ impl ArchiveManager {
             .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
 
         // Resolve tag names to tagnos, creating missing tags
-        let mut tagnos: Vec<u16> = Vec::new();
+        let mut tagnos: Vec<u32> = Vec::new();
         for tagname in &tags {
             let tagno = match archive.get_tde_from_tagname(tagname.clone())? {
                 Some(tde) => tde.get_tagno(),
@@ -528,8 +528,8 @@ impl ArchiveManager {
         for fileno in filenos {
             let fde = archive.get_fde(fileno)?;
             let fm = archive.get_fm(fde.get_offset())?;
-            let mut current_tags = fm.get_tags();
-            let mut added: Vec<u16> = Vec::new();
+            let mut current_tags: Vec<u32> = fm.get_tags();
+            let mut added: Vec<u32> = Vec::new();
             for &tagno in &tagnos {
                 if !current_tags.contains(&tagno) {
                     current_tags.push(tagno);
@@ -564,7 +564,7 @@ impl ArchiveManager {
             .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
 
         // Resolve tag names, skipping unknown tags
-        let mut tagnos: Vec<u16> = Vec::new();
+        let mut tagnos: Vec<u32> = Vec::new();
         for tagname in &tags {
             if let Some(tde) = archive.get_tde_from_tagname(tagname.clone())? {
                 tagnos.push(tde.get_tagno());
@@ -578,8 +578,8 @@ impl ArchiveManager {
         for fileno in filenos {
             let fde = archive.get_fde(fileno)?;
             let fm = archive.get_fm(fde.get_offset())?;
-            let mut current_tags = fm.get_tags();
-            let mut removed: Vec<u16> = Vec::new();
+            let mut current_tags: Vec<u32> = fm.get_tags();
+            let mut removed: Vec<u32> = Vec::new();
             current_tags.retain(|t| {
                 if tagnos.contains(t) {
                     removed.push(*t);
@@ -611,7 +611,7 @@ impl ArchiveManager {
             .as_mut()
             .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
 
-        let filenos: Vec<u16> = if tags.is_empty() {
+        let filenos: Vec<u32> = if tags.is_empty() {
             (0..archive.num_file_dir_slots())
                 .filter_map(|i| archive.get_fde(i).ok())
                 .filter(|fde| fde.is_valid())
@@ -644,7 +644,7 @@ impl ArchiveManager {
             .as_mut()
             .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
 
-        let filenos: Vec<u16> = if tags.is_empty() {
+        let filenos: Vec<u32> = if tags.is_empty() {
             (0..archive.num_file_dir_slots())
                 .filter_map(|i| archive.get_fde(i).ok())
                 .filter(|fde| fde.is_valid())

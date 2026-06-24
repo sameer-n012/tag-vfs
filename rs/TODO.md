@@ -102,6 +102,61 @@ Sub-points indicate optional arguments
 - data is arbitrary length
 - end-metadata is 40-bit unsigned integer representing length of data
 
+# Scale-Up Format Changes (100k files / 100 GB / 8.4M tags)
+
+The following are breaking binary format changes that must all be made together in a single coordinated migration.
+
+### Section 1 — File Directory
+
+- [x] Widen `num_file_dir_slots` and `num_file_dir_slots_used` in the section header from `u16` (2 bytes each) to `u32` (4 bytes each). Section header grows from 4 → 8 bytes. (`DIR_SECTION_HEADER_BYTES = 8`)
+- [x] Widen the `p` (parent index) field in FDE from 16 bits → 32 bits. FDE grows from 112 bits (14 bytes) → 128 bits (16 bytes).
+- [x] Update `MAX_FILE_DIR_SLOTS` constant from `u16::MAX` to a `u32` value ≥ 100,000.
+- [x] Update all code that reads/writes the Section 1 header to use `u32::from_be_bytes` / `to_be_bytes`.
+- [x] Update `file_directory_entry::SIZE_BYTES` from `u8` (14) to `usize` (16); update all slice arithmetic using this constant.
+- [x] In `_resize_archive`, update the stride calculation for copying FDE data and the padding fill for new slots.
+
+### Section 2 — Tag Directory
+
+- [x] Widen `num_tag_dir_slots` and `num_tag_dir_slots_used` in the section header from `u16` → `u32`. Section header grows from 4 → 8 bytes.
+- [x] Widen tag name field `t` in TDE from 16 bytes → 32 bytes (128 → 256 bits).
+- [x] Widen tag ID field `i` in TDE from 15 bits → 23 bits. TDE grows from 184 bits (23 bytes) → 320 bits (40 bytes).
+- [x] Update `MAX_TAG_DIR_SLOTS` from `u16::MAX` to `(1 << 23) - 1` as `u32`.
+- [x] Update `tag_directory_entry::SIZE_BYTES` from 23 → 40 and fix all slice arithmetic.
+- [x] Update `TagDirectoryEntry::get_tagno()` bit-shift logic for 23-bit field.
+- [x] Update tag name read/write in `TagDirectoryEntry` to use a 32-byte buffer.
+- [x] In `_resize_archive`, update the TDE stride and padding fill.
+
+### Section 3 — Tag Lookup
+
+- [x] Widen `tag_lookup_section_size` and `tag_lookup_section_size_used` in the section header from `u16` → `u32`. Widen `num_tag_lookup_tuples` from `u16` → `u32`. Section header grows from 4 → 8 bytes.
+- [x] Update all in-memory fields on `Archive` struct from `u16` to `u32`.
+- [x] Widen tag ID field `i` in TLE base from 15 bits → 23 bits. TLE base grows from 88 bits (11 bytes) → 96 bits (12 bytes). `BASE_SIZE_BYTES = 12`.
+- [x] Widen each file pointer `fi` in TLE payload from 16 bits (2 bytes) → 32 bits (4 bytes). `FILE_SLOT_SIZE = 4`.
+- [x] Update `tag_lookup_entry::MIN_SIZE_BYTES` to reflect new base and per-slot sizes.
+- [x] Update `_make_tle`, `_coalesce_tglk`, and all TLE scan loops for new base size and 4-byte file pointer stride.
+- [x] In `_resize_archive`, update the tag lookup section copy and arithmetic.
+
+### Section 4 — File Storage
+
+- [x] Widen `f` (file index) and `p` (parent index) fields in FM base from 16 bits → 32 bits each. FM base grows from 104 bits (13 bytes) → 136 bits (17 bytes). `BASE_SIZE_BYTES = 17`.
+- [x] Widen each per-file tag ID entry `ti` in FM from 16 bits (2 bytes) → 24 bits (3 bytes). `TAG_SLOT_SIZE = 3`.
+- [x] Update `get_fm`, `_find_file_space`, `_allocate_file_space`, and all Section 4 scan loops for the new FM base size.
+- [x] `FEM` (40-bit end-metadata) is unchanged.
+
+### Archive struct / archive_manager
+
+- [x] Change `num_file_dir_slots` and `num_file_dir_slots_used` fields on `Archive` from `u16` → `u32`.
+- [x] Change `num_tag_dir_slots` and `num_tag_dir_slots_used` fields on `Archive` from `u16` → `u32`.
+- [x] Widen `fileno`/`tagno` parameters from `u16` → `u32` in all public and private methods.
+- [x] Update `_read_section_pointers` and `_read_s1_meta`/`_read_s2_meta`/`_read_s3_meta` for widened headers.
+- [x] Update `create_archive_file` initial slot counts to use `u32` writes.
+- [x] Fixed `_resize_archive`: uses `SeekFrom::Start` for correct seek positions, remaps mmap after rename, uses `OpenOptions` read+write, fixed all u32 arithmetic.
+
+### Migration
+
+- [ ] Write a one-shot migration tool (or `migrate` command) that reads a v1 `.dat` file (old field widths) and rewrites it as a v2 `.dat` file with the new layout.
+- [ ] Bump the magic number (currently `13579`) or add a format version field to the Section 0 header so old and new archives are distinguishable.
+
 # Thoughts
 
 - on file remove, move file directory entry and file entry

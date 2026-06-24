@@ -27,8 +27,13 @@ const TGDR_S: u8 = 2; // tag directory section
 const TGLK_S: u8 = 3; // tag lookup section
 const FLST_S: u8 = 4; // file storage section
 
-const MAX_FILE_DIR_SLOTS: u16 = u16::MAX;
-const MAX_TAG_DIR_SLOTS: u16 = u16::MAX;
+const MAX_FILE_DIR_SLOTS: u32 = 200_000;
+const MAX_TAG_DIR_SLOTS: u32 = (1 << 23) - 1;
+
+// Number of bytes in each directory-section header (2×u32: slot count + slots used / size + tuples).
+const DIR_SECTION_HEADER_BYTES: usize = 8;
+// Number of bytes in the section-4 (file storage) header sentinel.
+const S4_HEADER_BYTES: usize = 4;
 
 const RESIZE_FILL_FACTOR_THRESHOLD: f32 = 0.5;
 const RESIZE_FACTOR: u8 = 2;
@@ -45,15 +50,15 @@ pub struct Archive {
 
     mmap_mut: MmapMut,
 
-    num_file_dir_slots: u16,
-    num_file_dir_slots_used: u16,
+    num_file_dir_slots: u32,
+    num_file_dir_slots_used: u32,
     // fldr_mbb: Option<MappedByteBuffer>,
-    num_tag_dir_slots: u16,
-    num_tag_dir_slots_used: u16,
+    num_tag_dir_slots: u32,
+    num_tag_dir_slots_used: u32,
     // tgdr_mbb: Option<MappedByteBuffer>,
-    tag_lookup_section_size: u16,      // includes metadata
-    tag_lookup_section_size_used: u16, // includes metadata
-    num_tag_lookup_tuples: u16,
+    tag_lookup_section_size: u32,      // data bytes, excludes header
+    tag_lookup_section_size_used: u32, // in-memory only, not persisted
+    num_tag_lookup_tuples: u32,
     // tglk_mbb: Option<MappedByteBuffer>,
     file_storage_section_size: u64,      // includes metadata
     file_storage_section_size_used: u64, // includes metadata
@@ -81,15 +86,15 @@ impl Archive {
 
             mmap_mut: unsafe { MmapMut::map_mut(&file.file.try_clone().unwrap())? },
 
-            num_file_dir_slots: 0,
-            num_file_dir_slots_used: 0,
+            num_file_dir_slots: 0u32,
+            num_file_dir_slots_used: 0u32,
             // fldr_mbb: None,
-            num_tag_dir_slots: 0,
-            num_tag_dir_slots_used: 0,
+            num_tag_dir_slots: 0u32,
+            num_tag_dir_slots_used: 0u32,
             // tgdr_mbb: None,
-            tag_lookup_section_size: 0,
-            tag_lookup_section_size_used: 0,
-            num_tag_lookup_tuples: 0,
+            tag_lookup_section_size: 0u32,
+            tag_lookup_section_size_used: 0u32,
+            num_tag_lookup_tuples: 0u32,
             // tglk_mbb: None,
             file_storage_section_size: 0,
             file_storage_section_size_used: 0,
@@ -164,15 +169,15 @@ impl Archive {
      */
     fn _resize_archive(&mut self) -> io::Result<()> {
         {
-            let l1 = self.head_l.write().unwrap();
-            let l2 = self.fldr_l.write().unwrap();
-            let l3 = self.tgdr_l.write().unwrap();
-            let l4 = self.tglk_l.write().unwrap();
-            let l5 = self.flst_l.write().unwrap();
+            let _l1 = self.head_l.write().unwrap();
+            let _l2 = self.fldr_l.write().unwrap();
+            let _l3 = self.tgdr_l.write().unwrap();
+            let _l4 = self.tglk_l.write().unwrap();
+            let _l5 = self.flst_l.write().unwrap();
 
             let mut fp: PathBuf = PathBuf::from(self.fpath.clone());
             fp.pop();
-            let mut c = 0;
+            let mut c = 0u32;
             while PathBuf::from(fp.as_os_str())
                 .join(c.to_string() + ARCHIVE_BACKUP_FILENAME)
                 .exists()
@@ -181,69 +186,71 @@ impl Archive {
             }
 
             let suffix: String = c.to_string() + ARCHIVE_BACKUP_FILENAME;
-
             let full_path: PathBuf = PathBuf::from(fp.as_os_str()).join(suffix);
-            let new_path = full_path.to_str().unwrap();
-            let mut new_file: File = File::create(Path::new(new_path))?;
+            let new_path = full_path.to_str().unwrap().to_string();
+            let mut new_file: File = File::create(Path::new(&new_path))?;
 
             let mut new_num_file_dir_slots = self.num_file_dir_slots;
-            if (self.num_file_dir_slots_used as f32
-                > self.num_file_dir_slots as f32 * RESIZE_FILL_FACTOR_THRESHOLD)
+            if self.num_file_dir_slots_used as f32
+                > self.num_file_dir_slots as f32 * RESIZE_FILL_FACTOR_THRESHOLD
             {
                 new_num_file_dir_slots =
-                    MAX_FILE_DIR_SLOTS.max(self.num_file_dir_slots * RESIZE_FACTOR as u16)
+                    MAX_FILE_DIR_SLOTS.max(self.num_file_dir_slots * RESIZE_FACTOR as u32);
             }
             let mut new_num_tag_dir_slots = self.num_tag_dir_slots;
-            if (self.num_tag_dir_slots_used as f32
-                > self.num_tag_dir_slots as f32 * RESIZE_FILL_FACTOR_THRESHOLD)
+            if self.num_tag_dir_slots_used as f32
+                > self.num_tag_dir_slots as f32 * RESIZE_FILL_FACTOR_THRESHOLD
             {
                 new_num_tag_dir_slots =
-                    MAX_TAG_DIR_SLOTS.max(self.num_tag_dir_slots * RESIZE_FACTOR as u16);
+                    MAX_TAG_DIR_SLOTS.max(self.num_tag_dir_slots * RESIZE_FACTOR as u32);
             }
             let mut new_tag_lookup_section_size = self.tag_lookup_section_size;
-            if (self.tag_lookup_section_size_used as f32
-                > self.tag_lookup_section_size as f32 * RESIZE_FILL_FACTOR_THRESHOLD)
+            if self.tag_lookup_section_size_used as f32
+                > self.tag_lookup_section_size as f32 * RESIZE_FILL_FACTOR_THRESHOLD
             {
-                new_tag_lookup_section_size = self.tag_lookup_section_size * RESIZE_FACTOR as u16;
+                new_tag_lookup_section_size =
+                    self.tag_lookup_section_size * RESIZE_FACTOR as u32;
             }
             let mut new_file_storage_section_size = self.file_storage_section_size;
-            if (self.file_storage_section_size_used as f32
-                > self.file_storage_section_size as f32 * RESIZE_FILL_FACTOR_THRESHOLD)
+            if self.file_storage_section_size_used as f32
+                > self.file_storage_section_size as f32 * RESIZE_FILL_FACTOR_THRESHOLD
             {
                 new_file_storage_section_size =
                     self.file_storage_section_size * RESIZE_FACTOR as u64;
             }
 
-            // write section 0 (same bit→byte fix as create)
+            // Section 0: 2-byte magic + 4×6-byte offsets = 26 bytes
             new_file.write(&(MAGIC_NUMBER as u16).to_be_bytes())?;
             let mut offset: u64 = (48 * 4 + 16) / 8; // 26 bytes
             new_file.write(&offset.to_be_bytes()[2..8])?;
-            offset += 4 + file_directory_entry::SIZE_BYTES as u64 * new_num_file_dir_slots as u64;
+            offset += DIR_SECTION_HEADER_BYTES as u64
+                + file_directory_entry::SIZE_BYTES as u64 * new_num_file_dir_slots as u64;
             new_file.write(&offset.to_be_bytes()[2..8])?;
-            offset += 4 + tag_directory_entry::SIZE_BYTES as u64 * new_num_tag_dir_slots as u64;
+            offset += DIR_SECTION_HEADER_BYTES as u64
+                + tag_directory_entry::SIZE_BYTES as u64 * new_num_tag_dir_slots as u64;
             new_file.write(&offset.to_be_bytes()[2..8])?;
-            offset += 4 + new_tag_lookup_section_size as u64;
+            offset += DIR_SECTION_HEADER_BYTES as u64 + new_tag_lookup_section_size as u64;
             new_file.write(&offset.to_be_bytes()[2..8])?;
 
             const BUF_SIZE: usize = 1024 * 1024;
             let mut byte_buf: [u8; BUF_SIZE] = [0; BUF_SIZE];
             let mut bytes_read: usize;
 
-            // write section 1
-            new_file.write(&new_num_file_dir_slots.to_be_bytes())?;
-            self.file.seek(SeekFrom::Current(2))?;
-            let mut bytes_left =
-                self.num_file_dir_slots * file_directory_entry::SIZE_BYTES as u16 + 2;
-            loop {
+            // Section 1: write new 2×u32 header, then copy FDE slots from old file
+            new_file.write(&new_num_file_dir_slots.to_be_bytes())?; // 4 bytes
+            new_file.write(&self.num_file_dir_slots_used.to_be_bytes())?; // 4 bytes
+            // Seek past old section 1 header in source file
+            let s1_start = self.section_offset[FLDR_S as usize] as u64;
+            self.file.seek(SeekFrom::Start(s1_start + DIR_SECTION_HEADER_BYTES as u64))?;
+            let mut bytes_left: u64 =
+                self.num_file_dir_slots as u64 * file_directory_entry::SIZE_BYTES as u64;
+            while bytes_left > 0 {
                 bytes_read = self
                     .file
-                    .read(&mut byte_buf[0..BUF_SIZE.min(bytes_left as usize)])
-                    .unwrap();
-                if bytes_read == 0 {
-                    break;
-                }
+                    .read(&mut byte_buf[0..BUF_SIZE.min(bytes_left as usize)])?;
+                if bytes_read == 0 { break; }
                 new_file.write(&byte_buf[0..bytes_read])?;
-                bytes_left -= bytes_read as u16;
+                bytes_left -= bytes_read as u64;
             }
             Archive::_write_empty(
                 &mut new_file,
@@ -251,21 +258,20 @@ impl Archive {
                     * file_directory_entry::SIZE_BYTES as u64,
             )?;
 
-            // write section 2
-            new_file.write(&new_num_tag_dir_slots.to_be_bytes())?;
-            self.file.seek(SeekFrom::Current(2))?;
-            let mut bytes_left =
-                self.num_tag_dir_slots * tag_directory_entry::SIZE_BYTES as u16 + 2;
-            loop {
+            // Section 2: write new 2×u32 header, then copy TDE slots from old file
+            new_file.write(&new_num_tag_dir_slots.to_be_bytes())?; // 4 bytes
+            new_file.write(&self.num_tag_dir_slots_used.to_be_bytes())?; // 4 bytes
+            let s2_start = self.section_offset[TGDR_S as usize] as u64;
+            self.file.seek(SeekFrom::Start(s2_start + DIR_SECTION_HEADER_BYTES as u64))?;
+            let mut bytes_left: u64 =
+                self.num_tag_dir_slots as u64 * tag_directory_entry::SIZE_BYTES as u64;
+            while bytes_left > 0 {
                 bytes_read = self
                     .file
-                    .read(&mut byte_buf[0..BUF_SIZE.min(bytes_left as usize)])
-                    .unwrap();
-                if bytes_read == 0 {
-                    break;
-                }
+                    .read(&mut byte_buf[0..BUF_SIZE.min(bytes_left as usize)])?;
+                if bytes_read == 0 { break; }
                 new_file.write(&byte_buf[0..bytes_read])?;
-                bytes_left -= bytes_read as u16;
+                bytes_left -= bytes_read as u64;
             }
             Archive::_write_empty(
                 &mut new_file,
@@ -273,37 +279,34 @@ impl Archive {
                     * tag_directory_entry::SIZE_BYTES as u64,
             )?;
 
-            // write section 3
-            new_file.write(&new_tag_lookup_section_size.to_be_bytes())?;
-            new_file.write(&self.num_tag_lookup_tuples.to_be_bytes())?;
-            self.file.seek(SeekFrom::Current(4))?; // skip 2×u16 header in source
-            let mut bytes_left = self.tag_lookup_section_size + 4;
-            loop {
+            // Section 3: write new 2×u32 header, then copy TLE data from old file
+            new_file.write(&new_tag_lookup_section_size.to_be_bytes())?; // 4 bytes
+            new_file.write(&self.num_tag_lookup_tuples.to_be_bytes())?; // 4 bytes
+            let s3_start = self.section_offset[TGLK_S as usize] as u64;
+            self.file.seek(SeekFrom::Start(s3_start + DIR_SECTION_HEADER_BYTES as u64))?;
+            let mut bytes_left: u64 = self.tag_lookup_section_size as u64;
+            while bytes_left > 0 {
                 bytes_read = self
                     .file
-                    .read(&mut byte_buf[0..BUF_SIZE.min(bytes_left as usize)])
-                    .unwrap();
-                if bytes_read == 0 {
-                    break;
-                }
+                    .read(&mut byte_buf[0..BUF_SIZE.min(bytes_left as usize)])?;
+                if bytes_read == 0 { break; }
                 new_file.write(&byte_buf[0..bytes_read])?;
-                bytes_left -= bytes_read as u16;
+                bytes_left -= bytes_read as u64;
             }
             Archive::_write_empty(
                 &mut new_file,
                 (new_tag_lookup_section_size - self.tag_lookup_section_size) as u64,
             )?;
 
-            // write section 4
-            let mut bytes_left = self.file_storage_section_size;
-            loop {
+            // Section 4: copy entire section verbatim, then append free block for extra space
+            let s4_start = self.section_offset[FLST_S as usize] as u64;
+            self.file.seek(SeekFrom::Start(s4_start))?;
+            let mut bytes_left: u64 = self.file_storage_section_size;
+            while bytes_left > 0 {
                 bytes_read = self
                     .file
-                    .read(&mut byte_buf[0..BUF_SIZE.min(bytes_left as usize)])
-                    .unwrap();
-                if bytes_read == 0 {
-                    break;
-                }
+                    .read(&mut byte_buf[0..BUF_SIZE.min(bytes_left as usize)])?;
+                if bytes_read == 0 { break; }
                 new_file.write(&byte_buf[0..bytes_read])?;
                 bytes_left -= bytes_read as u64;
             }
@@ -322,11 +325,13 @@ impl Archive {
             }
 
             new_file.flush()?;
-            self.file.rewind()?;
 
             fs::remove_file(&self.fpath)?;
-            fs::rename(new_path, &self.fpath)?;
-            self.file = File::open(&self.fpath)?;
+            fs::rename(&new_path, &self.fpath)?;
+            self.file = OpenOptions::new().read(true).write(true).open(&self.fpath)?;
+
+            // Remap mmap to new file contents
+            self.mmap_mut = unsafe { MmapMut::map_mut(&self.file)? };
         }
 
         self._read_section_pointers()?;
@@ -380,18 +385,12 @@ impl Archive {
     fn _read_s1_meta(&mut self) -> io::Result<()> {
         let lock = self.fldr_l.write().unwrap();
 
-        self.num_file_dir_slots = u16::from_be_bytes(
-            self.mmap_mut[self.section_offset[FLDR_S as usize] as usize
-                ..(self.section_offset[FLDR_S as usize] as usize + 2)]
-                .try_into()
-                .unwrap(),
+        let base = self.section_offset[FLDR_S as usize];
+        self.num_file_dir_slots = u32::from_be_bytes(
+            self.mmap_mut[base..base + 4].try_into().unwrap(),
         );
-
-        self.num_file_dir_slots_used = u16::from_be_bytes(
-            self.mmap_mut[self.section_offset[FLDR_S as usize] as usize + 2
-                ..(self.section_offset[FLDR_S as usize] as usize + 4)]
-                .try_into()
-                .unwrap(),
+        self.num_file_dir_slots_used = u32::from_be_bytes(
+            self.mmap_mut[base + 4..base + 8].try_into().unwrap(),
         );
 
         // file_storage_section_size_used is computed later by _compute_storage_used()
@@ -419,7 +418,7 @@ impl Archive {
             let fm = file_metadata::FileMetadata::from_bytes(base);
             let data_len = fm.get_length() as usize;
             let full_fm_size = file_metadata::BASE_SIZE_BYTES
-                + fm.get_num_tags_count() as usize * 2
+                + fm.get_num_tags_count() as usize * file_metadata::TAG_SLOT_SIZE
                 + fm.get_filename_len() as usize;
             let block_size = full_fm_size + data_len + file_end_metadata::SIZE_BYTES as usize;
             if block_size
@@ -444,18 +443,12 @@ impl Archive {
     fn _read_s2_meta(&mut self) -> io::Result<()> {
         let lock = self.tgdr_l.write().unwrap();
 
-        self.num_tag_dir_slots = u16::from_be_bytes(
-            self.mmap_mut
-                [self.section_offset[TGDR_S as usize]..(self.section_offset[TGDR_S as usize] + 2)]
-                .try_into()
-                .unwrap(),
+        let base = self.section_offset[TGDR_S as usize];
+        self.num_tag_dir_slots = u32::from_be_bytes(
+            self.mmap_mut[base..base + 4].try_into().unwrap(),
         );
-
-        self.num_tag_dir_slots_used = u16::from_be_bytes(
-            self.mmap_mut[self.section_offset[TGDR_S as usize] + 2
-                ..(self.section_offset[TGDR_S as usize] + 4)]
-                .try_into()
-                .unwrap(),
+        self.num_tag_dir_slots_used = u32::from_be_bytes(
+            self.mmap_mut[base + 4..base + 8].try_into().unwrap(),
         );
 
         return Ok(());
@@ -469,36 +462,13 @@ impl Archive {
     fn _read_s3_meta(&mut self) -> io::Result<()> {
         let lock = self.tglk_l.write().unwrap();
 
-        self.tag_lookup_section_size = u16::from_be_bytes(
-            self.mmap_mut
-                [self.section_offset[TGLK_S as usize]..(self.section_offset[TGLK_S as usize] + 2)]
-                .try_into()
-                .unwrap(),
+        let base = self.section_offset[TGLK_S as usize];
+        self.tag_lookup_section_size = u32::from_be_bytes(
+            self.mmap_mut[base..base + 4].try_into().unwrap(),
         );
-
-        self.num_tag_lookup_tuples = u16::from_be_bytes(
-            self.mmap_mut[self.section_offset[TGLK_S as usize] + 2
-                ..(self.section_offset[TGLK_S as usize] + 4)]
-                .try_into()
-                .unwrap(),
+        self.num_tag_lookup_tuples = u32::from_be_bytes(
+            self.mmap_mut[base + 4..base + 8].try_into().unwrap(),
         );
-
-        let mut bytes_read: usize = 0;
-        let mut num_file_slots: u16;
-
-        while bytes_read < self.tag_lookup_section_size as usize {
-            if self.mmap_mut[self.section_offset[TGLK_S as usize] + 4 + bytes_read] & 0x80 != 0 {
-                num_file_slots = u16::from_be_bytes(
-                    self.mmap_mut[self.section_offset[TGLK_S as usize] + 4 + bytes_read + 1
-                        ..self.section_offset[TGLK_S as usize] + 4 + bytes_read + 3]
-                        .try_into()
-                        .unwrap(),
-                );
-                bytes_read += (2 + 1 + 2 + 2 * num_file_slots + 5) as usize;
-            } else {
-                bytes_read += 2 + 1 + 2 + 2 * 0 + 5;
-            }
-        }
 
         Ok(())
     }
@@ -523,22 +493,17 @@ impl Archive {
      * @param fileno the file number to search for.
      * @return a file directory entry.
      */
-    pub fn get_fde(&mut self, fileno: u16) -> io::Result<file_directory_entry::FileDirectoryEntry> {
+    pub fn get_fde(&mut self, fileno: u32) -> io::Result<file_directory_entry::FileDirectoryEntry> {
         let lock = self.fldr_l.read().unwrap();
 
-        let buf: [u8; file_directory_entry::SIZE_BYTES as usize] = self.mmap_mut[self.section_offset
-            [FLDR_S as usize]
-            + 4
-            + fileno as usize * file_directory_entry::SIZE_BYTES as usize
-            ..self.section_offset[FLDR_S as usize]
-                + 4
-                + (fileno + 1) as usize * file_directory_entry::SIZE_BYTES as usize]
+        let start = self.section_offset[FLDR_S as usize]
+            + DIR_SECTION_HEADER_BYTES
+            + fileno as usize * file_directory_entry::SIZE_BYTES;
+        let buf: [u8; file_directory_entry::SIZE_BYTES] = self.mmap_mut[start..start + file_directory_entry::SIZE_BYTES]
             .try_into()
             .unwrap();
 
-        return Ok(file_directory_entry::FileDirectoryEntry::from_bytes(
-            fileno, buf,
-        ));
+        return Ok(file_directory_entry::FileDirectoryEntry::from_bytes(fileno, buf));
     }
 
     /**
@@ -556,24 +521,19 @@ impl Archive {
         let lock = self.fldr_l.read().unwrap();
 
         let filename_hash: u16 = Archive::_hash_filename(filename);
-
         let mut fdes: Vec<file_directory_entry::FileDirectoryEntry> = Vec::new();
 
-        let mut buf: [u8; file_directory_entry::SIZE_BYTES as usize];
-        for i in 0..self.num_file_dir_slots as usize {
-            buf = self.mmap_mut[self.section_offset[FLDR_S as usize]
-                + 4
-                + i * file_directory_entry::SIZE_BYTES as usize
-                ..self.section_offset[FLDR_S as usize]
-                    + 4
-                    + (i + 1) * file_directory_entry::SIZE_BYTES as usize]
-                .try_into()
-                .unwrap();
-            let fde = file_directory_entry::FileDirectoryEntry::from_bytes(i as u16, buf);
-            if (fde.is_valid() && fde.get_filename_hash() == filename_hash) {
-                fdes.push(file_directory_entry::FileDirectoryEntry::from_bytes(
-                    i as u16, buf,
-                ));
+        for i in 0..self.num_file_dir_slots {
+            let start = self.section_offset[FLDR_S as usize]
+                + DIR_SECTION_HEADER_BYTES
+                + i as usize * file_directory_entry::SIZE_BYTES;
+            let buf: [u8; file_directory_entry::SIZE_BYTES] =
+                self.mmap_mut[start..start + file_directory_entry::SIZE_BYTES]
+                    .try_into()
+                    .unwrap();
+            let fde = file_directory_entry::FileDirectoryEntry::from_bytes(i, buf);
+            if fde.is_valid() && fde.get_filename_hash() == filename_hash {
+                fdes.push(fde);
             }
         }
 
@@ -587,22 +547,18 @@ impl Archive {
      * @param tag the name of the tag to search for.
      * @return the tag directory entry found.
      */
-    pub fn get_tde(&self, tagno: u16) -> io::Result<tag_directory_entry::TagDirectoryEntry> {
+    pub fn get_tde(&self, tagno: u32) -> io::Result<tag_directory_entry::TagDirectoryEntry> {
         let lock = self.tgdr_l.read().unwrap();
 
-        let buf: [u8; tag_directory_entry::SIZE_BYTES as usize] = self.mmap_mut[self.section_offset
-            [TGDR_S as usize]
-            + 4
-            + tagno as usize * tag_directory_entry::SIZE_BYTES as usize
-            ..self.section_offset[TGDR_S as usize]
-                + 4
-                + (tagno + 1) as usize * tag_directory_entry::SIZE_BYTES as usize]
-            .try_into()
-            .unwrap();
+        let start = self.section_offset[TGDR_S as usize]
+            + DIR_SECTION_HEADER_BYTES
+            + tagno as usize * tag_directory_entry::SIZE_BYTES;
+        let buf: [u8; tag_directory_entry::SIZE_BYTES] =
+            self.mmap_mut[start..start + tag_directory_entry::SIZE_BYTES]
+                .try_into()
+                .unwrap();
 
-        return Ok(tag_directory_entry::TagDirectoryEntry::from_bytes(
-            tagno, buf,
-        ));
+        return Ok(tag_directory_entry::TagDirectoryEntry::from_bytes(tagno, buf));
     }
 
     /**
@@ -618,20 +574,16 @@ impl Archive {
     ) -> io::Result<Option<tag_directory_entry::TagDirectoryEntry>> {
         let lock = self.tgdr_l.read().unwrap();
 
-        let mut buf: [u8; tag_directory_entry::SIZE_BYTES as usize];
-        for i in 0..self.num_tag_dir_slots as usize {
-            buf = self.mmap_mut[self.section_offset[TGDR_S as usize]
-                + 4
-                + i * tag_directory_entry::SIZE_BYTES as usize
-                ..self.section_offset[TGDR_S as usize]
-                    + 4
-                    + (i + 1) * tag_directory_entry::SIZE_BYTES as usize]
-                .try_into()
-                .unwrap();
-
-            let tde = tag_directory_entry::TagDirectoryEntry::from_bytes(i as u16, buf);
-
-            if (tde.is_valid() && tde.get_name() == tagname) {
+        for i in 0..self.num_tag_dir_slots {
+            let start = self.section_offset[TGDR_S as usize]
+                + DIR_SECTION_HEADER_BYTES
+                + i as usize * tag_directory_entry::SIZE_BYTES;
+            let buf: [u8; tag_directory_entry::SIZE_BYTES] =
+                self.mmap_mut[start..start + tag_directory_entry::SIZE_BYTES]
+                    .try_into()
+                    .unwrap();
+            let tde = tag_directory_entry::TagDirectoryEntry::from_bytes(i, buf);
+            if tde.is_valid() && tde.get_name() == tagname {
                 return Ok(Some(tde));
             }
         }
@@ -651,13 +603,18 @@ impl Archive {
             [base_start..base_start + file_metadata::BASE_SIZE_BYTES]
             .to_vec();
 
-        let name_len = buf[10] as usize;
-        let num_tags = u16::from_be_bytes(buf[11..13].try_into().unwrap()) as usize;
+        let name_len = buf[file_metadata::FILENAME_LEN_OFFSET] as usize;
+        let num_tags = u16::from_be_bytes(
+            buf[file_metadata::NUM_TAGS_OFFSET..file_metadata::NUM_TAGS_OFFSET + 2]
+                .try_into()
+                .unwrap(),
+        ) as usize;
 
-        if name_len + num_tags * 2 > 0 {
+        let extra = name_len + num_tags * file_metadata::TAG_SLOT_SIZE;
+        if extra > 0 {
             buf.extend_from_slice(
                 &self.mmap_mut[base_start + file_metadata::BASE_SIZE_BYTES
-                    ..base_start + file_metadata::BASE_SIZE_BYTES + name_len + num_tags * 2],
+                    ..base_start + file_metadata::BASE_SIZE_BYTES + extra],
             );
         }
 
@@ -678,17 +635,15 @@ impl Archive {
     fn _make_fde(
         &mut self,
         length: u64,
-        parent: u16,
+        parent: u32,
         filename: String,
         offset: u64,
     ) -> io::Result<file_directory_entry::FileDirectoryEntry> {
         let mut need_resize: bool = false;
         {
             let lock = self.fldr_l.read().unwrap();
-
-            // all slots are currently filled
-            if (self.num_file_dir_slots_used == self.num_file_dir_slots) {
-                if (self.num_file_dir_slots == u16::MAX) {
+            if self.num_file_dir_slots_used == self.num_file_dir_slots {
+                if self.num_file_dir_slots >= MAX_FILE_DIR_SLOTS {
                     return Err(io::Error::new(
                         io::ErrorKind::Other,
                         "Maximum number of file directory slots reached",
@@ -703,42 +658,28 @@ impl Archive {
         }
 
         let lock = self.fldr_l.write().unwrap();
-
         let filename_hash: u16 = Archive::_hash_filename(filename);
 
-        let mut buf: [u8; file_directory_entry::SIZE_BYTES as usize];
         for i in 0..self.num_file_dir_slots {
-            buf = self.mmap_mut[self.section_offset[FLDR_S as usize]
-                + 4
-                + i as usize * file_directory_entry::SIZE_BYTES as usize
-                ..self.section_offset[FLDR_S as usize]
-                    + 4
-                    + (i + 1) as usize * file_directory_entry::SIZE_BYTES as usize]
-                .try_into()
-                .unwrap();
+            let start = self.section_offset[FLDR_S as usize]
+                + DIR_SECTION_HEADER_BYTES
+                + i as usize * file_directory_entry::SIZE_BYTES;
+            let buf: [u8; file_directory_entry::SIZE_BYTES] =
+                self.mmap_mut[start..start + file_directory_entry::SIZE_BYTES]
+                    .try_into()
+                    .unwrap();
 
-            if (!file_directory_entry::FileDirectoryEntry::from_bytes(i, buf).is_valid()) {
+            if !file_directory_entry::FileDirectoryEntry::from_bytes(i, buf).is_valid() {
                 let fde = file_directory_entry::FileDirectoryEntry::new(
-                    i,
-                    length,
-                    true,
-                    parent,
-                    filename_hash,
-                    offset,
+                    i, length, true, parent, filename_hash, offset,
                 );
-
-                self.mmap_mut[self.section_offset[FLDR_S as usize]
-                    + 4
-                    + i as usize * file_directory_entry::SIZE_BYTES as usize
-                    ..self.section_offset[FLDR_S as usize]
-                        + 4
-                        + (i + 1) as usize * file_directory_entry::SIZE_BYTES as usize]
+                self.mmap_mut[start..start + file_directory_entry::SIZE_BYTES]
                     .copy_from_slice(&fde.as_bytes());
 
                 self.num_file_dir_slots_used += 1;
-                self.mmap_mut[self.section_offset[FLDR_S as usize] + 2
-                    ..self.section_offset[FLDR_S as usize] + 4]
-                    .copy_from_slice(&self.num_file_dir_slots_used.to_be_bytes());
+                let used_bytes = self.num_file_dir_slots_used.to_be_bytes();
+                let header_base = self.section_offset[FLDR_S as usize];
+                self.mmap_mut[header_base + 4..header_base + 8].copy_from_slice(&used_bytes);
 
                 return Ok(fde);
             }
@@ -758,23 +699,18 @@ impl Archive {
      *
      * @param fileno the file number to delete.
      */
-    fn _delete_fde(&mut self, fileno: u16) -> io::Result<()> {
+    fn _delete_fde(&mut self, fileno: u32) -> io::Result<()> {
         let l = self.fldr_l.write().unwrap();
 
-        let buf: [u8; file_directory_entry::SIZE_BYTES as usize] =
-            [0; file_directory_entry::SIZE_BYTES as usize];
-
-        self.mmap_mut[self.section_offset[FLDR_S as usize]
-            + 4
-            + fileno as usize * file_directory_entry::SIZE_BYTES as usize
-            ..self.section_offset[FLDR_S as usize]
-                + 4
-                + (fileno + 1) as usize * file_directory_entry::SIZE_BYTES as usize]
-            .copy_from_slice(&buf);
+        let start = self.section_offset[FLDR_S as usize]
+            + DIR_SECTION_HEADER_BYTES
+            + fileno as usize * file_directory_entry::SIZE_BYTES;
+        self.mmap_mut[start..start + file_directory_entry::SIZE_BYTES]
+            .fill(0);
 
         self.num_file_dir_slots_used -= 1;
-        self.mmap_mut[self.section_offset[FLDR_S as usize] + 2
-            ..self.section_offset[FLDR_S as usize] + 4]
+        let header_base = self.section_offset[FLDR_S as usize];
+        self.mmap_mut[header_base + 4..header_base + 8]
             .copy_from_slice(&self.num_file_dir_slots_used.to_be_bytes());
 
         return Ok(());
@@ -804,10 +740,8 @@ impl Archive {
         let mut need_resize: bool = false;
         {
             let lock = self.tgdr_l.read().unwrap();
-
-            // all slots are currently filled
-            if (self.num_tag_dir_slots_used == self.num_tag_dir_slots) {
-                if (self.num_tag_dir_slots == u16::MAX) {
+            if self.num_tag_dir_slots_used == self.num_tag_dir_slots {
+                if self.num_tag_dir_slots >= MAX_TAG_DIR_SLOTS {
                     return Err(io::Error::new(
                         io::ErrorKind::Other,
                         "Maximum number of tag directory slots reached",
@@ -823,32 +757,24 @@ impl Archive {
 
         let lock = self.tgdr_l.write().unwrap();
 
-        let mut buf: [u8; tag_directory_entry::SIZE_BYTES as usize];
         for i in 0..self.num_tag_dir_slots {
-            buf = self.mmap_mut[self.section_offset[TGDR_S as usize]
-                + 4
-                + i as usize * tag_directory_entry::SIZE_BYTES as usize
-                ..self.section_offset[TGDR_S as usize]
-                    + 4
-                    + (i + 1) as usize * tag_directory_entry::SIZE_BYTES as usize]
-                .try_into()
-                .unwrap();
+            let start = self.section_offset[TGDR_S as usize]
+                + DIR_SECTION_HEADER_BYTES
+                + i as usize * tag_directory_entry::SIZE_BYTES;
+            let buf: [u8; tag_directory_entry::SIZE_BYTES] =
+                self.mmap_mut[start..start + tag_directory_entry::SIZE_BYTES]
+                    .try_into()
+                    .unwrap();
 
-            if (!tag_directory_entry::TagDirectoryEntry::from_bytes(i, buf).is_valid()) {
+            if !tag_directory_entry::TagDirectoryEntry::from_bytes(i, buf).is_valid() {
                 let tde =
                     tag_directory_entry::TagDirectoryEntry::new(i, true, tagname.as_str(), offset);
-
-                self.mmap_mut[self.section_offset[TGDR_S as usize]
-                    + 4
-                    + i as usize * tag_directory_entry::SIZE_BYTES as usize
-                    ..self.section_offset[TGDR_S as usize]
-                        + 4
-                        + (i + 1) as usize * tag_directory_entry::SIZE_BYTES as usize]
+                self.mmap_mut[start..start + tag_directory_entry::SIZE_BYTES]
                     .copy_from_slice(&tde.as_bytes());
 
                 self.num_tag_dir_slots_used += 1;
-                self.mmap_mut[self.section_offset[TGDR_S as usize] + 2
-                    ..self.section_offset[TGDR_S as usize] + 4]
+                let header_base = self.section_offset[TGDR_S as usize];
+                self.mmap_mut[header_base + 4..header_base + 8]
                     .copy_from_slice(&self.num_tag_dir_slots_used.to_be_bytes());
 
                 return Ok(tde);
@@ -869,23 +795,17 @@ impl Archive {
      *
      * @param tagno the tag number to delete.
      */
-    fn _delete_tde(&mut self, tagno: u16) -> io::Result<()> {
+    fn _delete_tde(&mut self, tagno: u32) -> io::Result<()> {
         let l = self.tgdr_l.write().unwrap();
 
-        let buf: [u8; tag_directory_entry::SIZE_BYTES as usize] =
-            [0; tag_directory_entry::SIZE_BYTES as usize];
-
-        self.mmap_mut[self.section_offset[TGDR_S as usize]
-            + 4
-            + tagno as usize * tag_directory_entry::SIZE_BYTES as usize
-            ..self.section_offset[TGDR_S as usize]
-                + 4
-                + (tagno + 1) as usize * tag_directory_entry::SIZE_BYTES as usize]
-            .copy_from_slice(&buf);
+        let start = self.section_offset[TGDR_S as usize]
+            + DIR_SECTION_HEADER_BYTES
+            + tagno as usize * tag_directory_entry::SIZE_BYTES;
+        self.mmap_mut[start..start + tag_directory_entry::SIZE_BYTES].fill(0);
 
         self.num_tag_dir_slots_used -= 1;
-        self.mmap_mut[self.section_offset[TGDR_S as usize] + 2
-            ..self.section_offset[TGDR_S as usize] + 4]
+        let header_base = self.section_offset[TGDR_S as usize];
+        self.mmap_mut[header_base + 4..header_base + 8]
             .copy_from_slice(&self.num_tag_dir_slots_used.to_be_bytes());
 
         return Ok(());
@@ -903,8 +823,8 @@ impl Archive {
      */
     pub fn _make_tle(
         &mut self,
-        tagno: u16,
-        filenos: Vec<u16>,
+        tagno: u32,
+        filenos: Vec<u32>,
     ) -> io::Result<tag_lookup_entry::TagLookupEntry> {
         // Pass 1: find the last TLE for this tag (the one with no valid next pointer).
         // Track its offset, slot count, and current file count.
@@ -917,13 +837,10 @@ impl Archive {
             while bytes_read + tag_lookup_entry::BASE_SIZE_BYTES
                 < self.tag_lookup_section_size as usize
             {
-                let buf: Vec<u8> = self.mmap_mut[self.section_offset[TGLK_S as usize] + 4 + bytes_read
-                    ..self.section_offset[TGLK_S as usize]
-                        + 4
-                        + bytes_read
-                        + tag_lookup_entry::BASE_SIZE_BYTES]
-                    .try_into()
-                    .unwrap();
+                let data_base = self.section_offset[TGLK_S as usize] + DIR_SECTION_HEADER_BYTES;
+                let buf: Vec<u8> = self.mmap_mut
+                    [data_base + bytes_read..data_base + bytes_read + tag_lookup_entry::BASE_SIZE_BYTES]
+                    .to_vec();
                 let tle = tag_lookup_entry::TagLookupEntry::from_bytes(buf);
 
                 if tle.is_valid() && tle.tagno() == tagno && !tle.is_offset_valid() {
@@ -932,8 +849,9 @@ impl Archive {
                     last_num_files = tle.get_num_files();
                 }
 
-                bytes_read +=
-                    tag_lookup_entry::BASE_SIZE_BYTES + tle.get_num_file_slots() as usize * 2;
+                bytes_read += tag_lookup_entry::TagLookupEntry::calculate_needed_size(
+                    tle.get_num_file_slots(),
+                );
             }
         }
 
@@ -941,23 +859,25 @@ impl Archive {
         if let Some(prev_off) = last_offset {
             if last_num_file_slots - last_num_files >= filenos.len() as u16 {
                 let lock = self.tglk_l.write().unwrap();
-                let base = self.section_offset[TGLK_S as usize] + 4 + prev_off as usize;
+                let data_base =
+                    self.section_offset[TGLK_S as usize] + DIR_SECTION_HEADER_BYTES + prev_off as usize;
                 for (i, &fileno) in filenos.iter().enumerate() {
                     let slot = last_num_files as usize + i;
-                    self.mmap_mut[base + tag_lookup_entry::BASE_SIZE_BYTES + slot * 2
-                        ..base + tag_lookup_entry::BASE_SIZE_BYTES + slot * 2 + 2]
+                    let slot_start = data_base
+                        + tag_lookup_entry::BASE_SIZE_BYTES
+                        + slot * tag_lookup_entry::FILE_SLOT_SIZE;
+                    self.mmap_mut[slot_start..slot_start + tag_lookup_entry::FILE_SLOT_SIZE]
                         .copy_from_slice(&fileno.to_be_bytes());
                 }
+                // num_files field is at offset NUM_FILES_OFFSET = 5 within the TLE base.
                 let new_count = last_num_files + filenos.len() as u16;
-                self.mmap_mut[base + 4..base + 6]
+                self.mmap_mut[data_base + 5..data_base + 7]
                     .copy_from_slice(&new_count.to_be_bytes());
 
-                let full_buf: Vec<u8> = self.mmap_mut[base
-                    ..base
-                        + tag_lookup_entry::BASE_SIZE_BYTES
-                        + last_num_file_slots as usize * 2]
-                    .try_into()
-                    .unwrap();
+                let full_size = tag_lookup_entry::TagLookupEntry::calculate_needed_size(
+                    last_num_file_slots,
+                );
+                let full_buf: Vec<u8> = self.mmap_mut[data_base..data_base + full_size].to_vec();
                 return Ok(tag_lookup_entry::TagLookupEntry::from_bytes(full_buf));
             }
         }
@@ -966,15 +886,15 @@ impl Archive {
         let new_num_file_slots = last_num_file_slots * 2 + 1;
 
         // Pass 2: find a free slot large enough for the new TLE, resizing once if needed.
-        let find_free_slot = |mmap_mut: &MmapMut, section_offset: usize, section_size: u16| {
+        let find_free_slot = |mmap_mut: &MmapMut, section_offset: usize, section_size: u32| {
             let needed =
                 tag_lookup_entry::TagLookupEntry::calculate_needed_size(new_num_file_slots);
+            let data_base = section_offset + DIR_SECTION_HEADER_BYTES;
             let mut bytes_read: usize = 0;
             while bytes_read + tag_lookup_entry::BASE_SIZE_BYTES < section_size as usize {
-                let buf: Vec<u8> = mmap_mut[section_offset + 4 + bytes_read
-                    ..section_offset + 4 + bytes_read + tag_lookup_entry::BASE_SIZE_BYTES]
-                    .try_into()
-                    .unwrap();
+                let buf: Vec<u8> = mmap_mut
+                    [data_base + bytes_read..data_base + bytes_read + tag_lookup_entry::BASE_SIZE_BYTES]
+                    .to_vec();
                 let tle = tag_lookup_entry::TagLookupEntry::from_bytes(buf);
                 if !tle.is_valid() {
                     if tle.get_num_file_slots() >= new_num_file_slots {
@@ -990,8 +910,9 @@ impl Archive {
                         break;
                     }
                 }
-                bytes_read +=
-                    tag_lookup_entry::BASE_SIZE_BYTES + tle.get_num_file_slots() as usize * 2;
+                bytes_read += tag_lookup_entry::TagLookupEntry::calculate_needed_size(
+                    tle.get_num_file_slots(),
+                );
             }
             None
         };
@@ -1022,7 +943,6 @@ impl Archive {
         }
 
         let offset = new_offset.unwrap();
-
         let lock = self.tglk_l.write().unwrap();
 
         let tle = tag_lookup_entry::TagLookupEntry::new(
@@ -1035,22 +955,24 @@ impl Archive {
             false,
         );
 
-        // write new tle
-        self.mmap_mut[self.section_offset[TGLK_S as usize] + 4 + offset as usize
-            ..self.section_offset[TGLK_S as usize] + 4 + offset as usize + tle.size_bytes()]
+        // Write new TLE.
+        let data_base = self.section_offset[TGLK_S as usize] + DIR_SECTION_HEADER_BYTES;
+        self.mmap_mut[data_base + offset as usize..data_base + offset as usize + tle.size_bytes()]
             .copy_from_slice(&tle.as_bytes());
 
-        // update previous tle: write next offset and set the offset_valid bit
+        // Update previous TLE: write next offset and set the offset_valid bit.
         if let Some(prev_off) = last_offset {
-            let base = self.section_offset[TGLK_S as usize] + 4 + prev_off as usize;
-            self.mmap_mut[base + 6..base + 11]
+            let prev_base = data_base + prev_off as usize;
+            // next-offset field starts at byte 7 of TLE base (NEXT_OFFSET_FIELD).
+            self.mmap_mut[prev_base + 7..prev_base + 12]
                 .copy_from_slice(&offset.to_be_bytes()[3..]);
+            // num_files field is at byte 5 (NUM_FILES_OFFSET); increment to mark offset valid.
             let raw_n =
-                u16::from_be_bytes(self.mmap_mut[base + 4..base + 6].try_into().unwrap());
+                u16::from_be_bytes(self.mmap_mut[prev_base + 5..prev_base + 7].try_into().unwrap());
             let num_slots =
-                u16::from_be_bytes(self.mmap_mut[base + 2..base + 4].try_into().unwrap());
+                u16::from_be_bytes(self.mmap_mut[prev_base + 3..prev_base + 5].try_into().unwrap());
             if raw_n <= num_slots {
-                self.mmap_mut[base + 4..base + 6]
+                self.mmap_mut[prev_base + 5..prev_base + 7]
                     .copy_from_slice(&(raw_n + 1).to_be_bytes());
             }
         }
@@ -1107,7 +1029,7 @@ impl Archive {
             let scan_fm = file_metadata::FileMetadata::from_bytes(base);
             let data_len = scan_fm.get_length() as usize;
             let full_fm_size = file_metadata::BASE_SIZE_BYTES
-                + scan_fm.get_num_tags_count() as usize * 2
+                + scan_fm.get_num_tags_count() as usize * file_metadata::TAG_SLOT_SIZE
                 + scan_fm.get_filename_len() as usize;
             let block_size = full_fm_size + data_len + file_end_metadata::SIZE_BYTES as usize;
 
@@ -1139,11 +1061,11 @@ impl Archive {
         &mut self,
         offset: u64,
         length: u64,
-        fileno: u16,
-        parent: u16,
+        fileno: u32,
+        parent: u32,
         filename: String,
         filetype: u8,
-        tags: Vec<u16>,
+        tags: Vec<u32>,
     ) -> io::Result<file_metadata::FileMetadata> {
         // Check for available space or resize
         let mut offset: u64 = 0;
@@ -1193,7 +1115,7 @@ impl Archive {
             .to_vec();
         let free_fm_scan = file_metadata::FileMetadata::from_bytes(free_base);
         let free_block_total = file_metadata::BASE_SIZE_BYTES
-            + free_fm_scan.get_num_tags_count() as usize * 2
+            + free_fm_scan.get_num_tags_count() as usize * file_metadata::TAG_SLOT_SIZE
             + free_fm_scan.get_filename_len() as usize
             + free_fm_scan.get_length() as usize
             + file_end_metadata::SIZE_BYTES as usize;
@@ -1255,86 +1177,73 @@ impl Archive {
      * @return io::Result<()> indicating success or failure.
      */
     pub fn _coalesce_tglk(&mut self) -> io::Result<()> {
-        // create new hash map mapping tag id -> vec of tuple offsets
-        let mut tag_map: HashMap<u16, Vec<TagLookupEntry>> = HashMap::new();
+        // Build map: tagno -> all valid TLEs for that tag.
+        let mut tag_map: HashMap<u32, Vec<TagLookupEntry>> = HashMap::new();
 
-        let mut bytes_read: usize = 4;
-        while (bytes_read + tag_lookup_entry::BASE_SIZE_BYTES
-            < self.tag_lookup_section_size as usize)
+        let data_base = self.section_offset[TGLK_S as usize] + DIR_SECTION_HEADER_BYTES;
+        let mut bytes_read: usize = 0;
+        while bytes_read + tag_lookup_entry::BASE_SIZE_BYTES < self.tag_lookup_section_size as usize
         {
-            let buf = self.mmap_mut[self.section_offset[TGLK_S as usize] + bytes_read
-                ..self.section_offset[TGLK_S as usize]
-                    + bytes_read
-                    + tag_lookup_entry::BASE_SIZE_BYTES]
-                .try_into()
-                .unwrap();
-
+            let buf = self.mmap_mut
+                [data_base + bytes_read..data_base + bytes_read + tag_lookup_entry::BASE_SIZE_BYTES]
+                .to_vec();
             let tle = TagLookupEntry::from_bytes(buf);
 
             if tle.is_valid() {
                 let full_tle = TagLookupEntry::from_bytes(
-                    self.mmap_mut[self.section_offset[TGLK_S as usize] + bytes_read
-                        ..self.section_offset[TGLK_S as usize]
+                    self.mmap_mut[data_base + bytes_read
+                        ..data_base
                             + bytes_read
                             + TagLookupEntry::calculate_needed_size(tle.get_num_file_slots())]
-                        .try_into()
-                        .unwrap(),
+                        .to_vec(),
                 );
                 let tagno = full_tle.tagno();
-                if !tag_map.contains_key(&tagno) {
-                    tag_map.insert(tagno, Vec::new());
-                }
-                tag_map.get_mut(&tagno).unwrap().push(full_tle);
+                tag_map.entry(tagno).or_default().push(full_tle);
             }
 
             bytes_read += TagLookupEntry::calculate_needed_size(tle.get_num_file_slots());
         }
 
-        // iterate through hash map and get sizes of future tag tuples
-        let mut cur_offset = 4;
+        // Rewrite the section compactly: one chain of TLEs per tag.
+        let mut cur_offset: usize = 0;
         for (tagno, vec) in tag_map.iter() {
             let mut total_files_in_tag: u32 = 0;
-            let mut file_ids: Vec<u16> = Vec::new();
+            let mut file_ids: Vec<u32> = Vec::new();
             for tle in vec.iter() {
                 total_files_in_tag += tle.get_num_files() as u32;
                 file_ids.extend_from_slice(&tle.get_filenos()[0..tle.get_num_files() as usize]);
             }
 
             let mut files_per_tle: Vec<u32> = Vec::new();
-            let mut tle_size_counter: u32 = 15;
+            let mut tle_size_counter: u32 = tag_lookup_entry::MIN_NUM_FILE_SLOTS as u32;
             while total_files_in_tag > 0 {
                 files_per_tle.push(tle_size_counter);
-                total_files_in_tag =
-                    total_files_in_tag.saturating_sub(tle_size_counter);
+                total_files_in_tag = total_files_in_tag.saturating_sub(tle_size_counter);
                 tle_size_counter = tle_size_counter * 2 + 1;
             }
 
-            // write new tag lookup entries
-            // TODO
-            file_ids.extend(vec![0; *(files_per_tle.last().unwrap()) as usize]);
+            file_ids.extend(vec![0u32; *files_per_tle.last().unwrap_or(&0) as usize]);
             for i in 0..files_per_tle.len() {
-                let n = *(files_per_tle.get(i).unwrap()) as usize;
-                let mut tle_file_ids: Vec<u16> = file_ids.drain(0..n.min(file_ids.len())).collect();
+                let n = files_per_tle[i] as usize;
+                let mut tle_file_ids: Vec<u32> =
+                    file_ids.drain(0..n.min(file_ids.len())).collect();
                 let valid_len = tle_file_ids.len();
                 if valid_len < n {
-                    tle_file_ids.extend(vec![0; n - valid_len])
+                    tle_file_ids.extend(vec![0u32; n - valid_len]);
                 }
 
-                let new_tle_size = TagLookupEntry::calculate_needed_size(n as u16) as u64;
+                let new_tle_size = TagLookupEntry::calculate_needed_size(n as u16);
                 let new_tle = TagLookupEntry::new(
                     *tagno,
                     true,
                     n as u16,
                     valid_len as u16,
                     tle_file_ids,
-                    cur_offset + new_tle_size,
+                    (cur_offset + new_tle_size) as u64,
                     !file_ids.is_empty(),
                 );
 
-                self.mmap_mut[self.section_offset[TGLK_S as usize] + cur_offset as usize
-                    ..self.section_offset[TGLK_S as usize]
-                        + cur_offset as usize
-                        + new_tle_size as usize]
+                self.mmap_mut[data_base + cur_offset..data_base + cur_offset + new_tle_size]
                     .copy_from_slice(&new_tle.as_bytes());
 
                 cur_offset += new_tle_size;
@@ -1345,11 +1254,11 @@ impl Archive {
             }
         }
 
-        // zero out the rest of the tag lookup section
-        let zeros = vec![0; self.tag_lookup_section_size as usize - cur_offset as usize];
-        self.mmap_mut[self.section_offset[TGLK_S as usize] + cur_offset as usize
-            ..self.section_offset[TGLK_S as usize] + cur_offset as usize + zeros.len()]
-            .copy_from_slice(zeros.as_slice());
+        // Zero out the remainder of the data region.
+        let data_end = self.tag_lookup_section_size as usize;
+        if cur_offset < data_end {
+            self.mmap_mut[data_base + cur_offset..data_base + data_end].fill(0);
+        }
 
         return Ok(());
     }
@@ -1464,7 +1373,7 @@ impl Archive {
             } else {
                 // Move to next file (must include variable-length FM parts)
                 let full_fm_size = file_metadata::BASE_SIZE_BYTES
-                    + fm.get_num_tags_count() as usize * 2
+                    + fm.get_num_tags_count() as usize * file_metadata::TAG_SLOT_SIZE
                     + fm.get_filename_len() as usize;
                 offset += full_fm_size + length + file_end_metadata::SIZE_BYTES as usize;
             }
@@ -1574,26 +1483,25 @@ impl Archive {
     }
 
     /// Returns the total number of file directory slots.
-    pub fn num_file_dir_slots(&self) -> u16 {
+    pub fn num_file_dir_slots(&self) -> u32 {
         self.num_file_dir_slots
     }
 
     /// Returns all file numbers for a given tag number.
-    pub fn _get_all_filenos_for_tag(&self, tagno: u16) -> io::Result<Vec<u16>> {
+    pub fn _get_all_filenos_for_tag(&self, tagno: u32) -> io::Result<Vec<u32>> {
         let mut filenos = Vec::new();
-        let mut bytes_read: usize = 4;
+        let data_base = self.section_offset[TGLK_S as usize] + DIR_SECTION_HEADER_BYTES;
+        let mut bytes_read: usize = 0;
         while bytes_read + tag_lookup_entry::BASE_SIZE_BYTES < self.tag_lookup_section_size as usize
         {
-            let buf = self.mmap_mut[self.section_offset[TGLK_S as usize] + bytes_read
-                ..self.section_offset[TGLK_S as usize]
-                    + bytes_read
-                    + tag_lookup_entry::BASE_SIZE_BYTES]
+            let buf = self.mmap_mut
+                [data_base + bytes_read..data_base + bytes_read + tag_lookup_entry::BASE_SIZE_BYTES]
                 .to_vec();
             let tle = tag_lookup_entry::TagLookupEntry::from_bytes(buf.clone());
             if tle.is_valid() && tle.tagno() == tagno {
                 let full_tle = tag_lookup_entry::TagLookupEntry::from_bytes(
-                    self.mmap_mut[self.section_offset[TGLK_S as usize] + bytes_read
-                        ..self.section_offset[TGLK_S as usize]
+                    self.mmap_mut[data_base + bytes_read
+                        ..data_base
                             + bytes_read
                             + tag_lookup_entry::TagLookupEntry::calculate_needed_size(
                                 tle.get_num_file_slots(),
@@ -1609,7 +1517,7 @@ impl Archive {
     }
 
     /// Removes a tag number from a single file's metadata entry.
-    fn _remove_tagno_from_file_metadata(&mut self, fileno: u16, tagno: u16) -> io::Result<()> {
+    fn _remove_tagno_from_file_metadata(&mut self, fileno: u32, tagno: u32) -> io::Result<()> {
         let fde = self.get_fde(fileno)?;
         let offset = fde.get_offset();
         let fm = self.get_fm(offset)?;
@@ -1634,22 +1542,21 @@ impl Archive {
     }
 
     /// Deletes all tag lookup entries for a given tag number.
-    fn _delete_all_tle_for_tag(&mut self, tagno: u16) -> io::Result<()> {
-        let mut bytes_read: usize = 4;
+    fn _delete_all_tle_for_tag(&mut self, tagno: u32) -> io::Result<()> {
+        let data_base = self.section_offset[TGLK_S as usize] + DIR_SECTION_HEADER_BYTES;
+        let mut bytes_read: usize = 0;
         while bytes_read + tag_lookup_entry::BASE_SIZE_BYTES < self.tag_lookup_section_size as usize
         {
-            let buf = self.mmap_mut[self.section_offset[TGLK_S as usize] + bytes_read
-                ..self.section_offset[TGLK_S as usize]
-                    + bytes_read
-                    + tag_lookup_entry::BASE_SIZE_BYTES]
+            let buf = self.mmap_mut
+                [data_base + bytes_read..data_base + bytes_read + tag_lookup_entry::BASE_SIZE_BYTES]
                 .to_vec();
             let tle = tag_lookup_entry::TagLookupEntry::from_bytes(buf.clone());
             if tle.is_valid() && tle.tagno() == tagno {
-                // Mark as invalid
+                // Clear the valid bit (LSB of byte 2 in the packed 3-byte field)
                 let mut new_bytes = tle.as_bytes();
-                new_bytes[1] &= !1; // Clear valid bit
-                self.mmap_mut[self.section_offset[TGLK_S as usize] + bytes_read
-                    ..self.section_offset[TGLK_S as usize] + bytes_read + new_bytes.len()]
+                new_bytes[2] &= !1;
+                self.mmap_mut[data_base + bytes_read
+                    ..data_base + bytes_read + new_bytes.len()]
                     .copy_from_slice(&new_bytes);
             }
             bytes_read +=
@@ -1659,8 +1566,8 @@ impl Archive {
     }
 
     /// Removes a tag number from all file metadata entries.
-    fn _remove_tagno_from_all_file_metadata(&mut self, tagno: u16) -> io::Result<()> {
-        let mut offset = 4;
+    fn _remove_tagno_from_all_file_metadata(&mut self, tagno: u32) -> io::Result<()> {
+        let mut offset = S4_HEADER_BYTES;
         while offset < self.file_storage_section_size as usize {
             let meta_start = self.section_offset[FLST_S as usize] + offset;
             let mut meta_buf = vec![0u8; file_metadata::BASE_SIZE_BYTES];
@@ -1695,20 +1602,19 @@ impl Archive {
     }
 
     /// Removes a file number from all tag lookup entries.
-    fn _remove_fileno_from_all_tag_lookups(&mut self, fileno: u16) -> io::Result<()> {
-        let mut bytes_read: usize = 4;
+    fn _remove_fileno_from_all_tag_lookups(&mut self, fileno: u32) -> io::Result<()> {
+        let data_base = self.section_offset[TGLK_S as usize] + DIR_SECTION_HEADER_BYTES;
+        let mut bytes_read: usize = 0;
         while bytes_read + tag_lookup_entry::BASE_SIZE_BYTES < self.tag_lookup_section_size as usize
         {
-            let buf = self.mmap_mut[self.section_offset[TGLK_S as usize] + bytes_read
-                ..self.section_offset[TGLK_S as usize]
-                    + bytes_read
-                    + tag_lookup_entry::BASE_SIZE_BYTES]
+            let buf = self.mmap_mut
+                [data_base + bytes_read..data_base + bytes_read + tag_lookup_entry::BASE_SIZE_BYTES]
                 .to_vec();
             let tle = tag_lookup_entry::TagLookupEntry::from_bytes(buf.clone());
             if tle.is_valid() {
-                let mut full_tle = tag_lookup_entry::TagLookupEntry::from_bytes(
-                    self.mmap_mut[self.section_offset[TGLK_S as usize] + bytes_read
-                        ..self.section_offset[TGLK_S as usize]
+                let full_tle = tag_lookup_entry::TagLookupEntry::from_bytes(
+                    self.mmap_mut[data_base + bytes_read
+                        ..data_base
                             + bytes_read
                             + tag_lookup_entry::TagLookupEntry::calculate_needed_size(
                                 tle.get_num_file_slots(),
@@ -1719,7 +1625,6 @@ impl Archive {
                 let orig_len = filenos.len();
                 filenos.retain(|&f| f != fileno);
                 if filenos.len() != orig_len {
-                    // Write back updated TLE, preserving next-pointer
                     let new_tle = tag_lookup_entry::TagLookupEntry::new(
                         full_tle.tagno(),
                         true,
@@ -1729,8 +1634,8 @@ impl Archive {
                         full_tle.get_next_offset(),
                         full_tle.is_offset_valid(),
                     );
-                    self.mmap_mut[self.section_offset[TGLK_S as usize] + bytes_read
-                        ..self.section_offset[TGLK_S as usize] + bytes_read + new_tle.size_bytes()]
+                    self.mmap_mut
+                        [data_base + bytes_read..data_base + bytes_read + new_tle.size_bytes()]
                         .copy_from_slice(&new_tle.as_bytes());
                 }
             }
@@ -1746,20 +1651,19 @@ impl Archive {
      * @param fileno the file number to remove.
      * @param tagno the tag whose lookup entries to search.
      */
-    pub fn _remove_fileno_from_tag_lookup(&mut self, fileno: u16, tagno: u16) -> io::Result<()> {
-        let mut bytes_read: usize = 4;
+    pub fn _remove_fileno_from_tag_lookup(&mut self, fileno: u32, tagno: u32) -> io::Result<()> {
+        let data_base = self.section_offset[TGLK_S as usize] + DIR_SECTION_HEADER_BYTES;
+        let mut bytes_read: usize = 0;
         while bytes_read + tag_lookup_entry::BASE_SIZE_BYTES < self.tag_lookup_section_size as usize
         {
-            let buf = self.mmap_mut[self.section_offset[TGLK_S as usize] + bytes_read
-                ..self.section_offset[TGLK_S as usize]
-                    + bytes_read
-                    + tag_lookup_entry::BASE_SIZE_BYTES]
+            let buf = self.mmap_mut
+                [data_base + bytes_read..data_base + bytes_read + tag_lookup_entry::BASE_SIZE_BYTES]
                 .to_vec();
             let tle = tag_lookup_entry::TagLookupEntry::from_bytes(buf);
             if tle.is_valid() && tle.tagno() == tagno {
                 let full_tle = tag_lookup_entry::TagLookupEntry::from_bytes(
-                    self.mmap_mut[self.section_offset[TGLK_S as usize] + bytes_read
-                        ..self.section_offset[TGLK_S as usize]
+                    self.mmap_mut[data_base + bytes_read
+                        ..data_base
                             + bytes_read
                             + tag_lookup_entry::TagLookupEntry::calculate_needed_size(
                                 tle.get_num_file_slots(),
@@ -1779,10 +1683,8 @@ impl Archive {
                         full_tle.get_next_offset(),
                         full_tle.is_offset_valid(),
                     );
-                    self.mmap_mut[self.section_offset[TGLK_S as usize] + bytes_read
-                        ..self.section_offset[TGLK_S as usize]
-                            + bytes_read
-                            + new_tle.size_bytes()]
+                    self.mmap_mut[data_base + bytes_read
+                        ..data_base + bytes_read + new_tle.size_bytes()]
                         .copy_from_slice(&new_tle.as_bytes());
                 }
             }
@@ -1801,7 +1703,7 @@ impl Archive {
      * @param fileno the file number to update.
      * @param new_tags the new list of tag IDs for the file.
      */
-    pub fn _update_file_tags(&mut self, fileno: u16, new_tags: Vec<u16>) -> io::Result<()> {
+    pub fn _update_file_tags(&mut self, fileno: u32, new_tags: Vec<u32>) -> io::Result<()> {
         let fde = self.get_fde(fileno)?;
         let old_offset = fde.get_offset();
         let fm = self.get_fm(old_offset)?;
@@ -1830,7 +1732,7 @@ impl Archive {
         let mut new_offset: Option<usize> = None;
         // Also track total available bytes at the chosen offset for remainder splitting.
         let mut new_offset_available: usize = 0;
-        let mut scan = 4usize; // skip 4-byte section header
+        let mut scan = S4_HEADER_BYTES;
         while scan + file_metadata::BASE_SIZE_BYTES < self.file_storage_section_size as usize {
             let scan_start = self.section_offset[FLST_S as usize] + scan;
             let base: Vec<u8> = self.mmap_mut
@@ -1838,7 +1740,7 @@ impl Archive {
                 .to_vec();
             let scan_fm = file_metadata::FileMetadata::from_bytes(base);
             let full_fm_size = file_metadata::BASE_SIZE_BYTES
-                + scan_fm.get_num_tags_count() as usize * 2
+                + scan_fm.get_num_tags_count() as usize * file_metadata::TAG_SLOT_SIZE
                 + scan_fm.get_filename_len() as usize;
             let block_size = full_fm_size
                 + scan_fm.get_length() as usize
@@ -1868,7 +1770,7 @@ impl Archive {
 
         if new_offset.is_none() {
             self._resize_archive()?;
-            let mut scan = 4usize; // skip 4-byte section header
+            let mut scan = S4_HEADER_BYTES;
             while scan + file_metadata::BASE_SIZE_BYTES < self.file_storage_section_size as usize {
                 let scan_start = self.section_offset[FLST_S as usize] + scan;
                 let base: Vec<u8> = self.mmap_mut
@@ -1876,7 +1778,7 @@ impl Archive {
                     .to_vec();
                 let scan_fm = file_metadata::FileMetadata::from_bytes(base);
                 let full_fm_size = file_metadata::BASE_SIZE_BYTES
-                    + scan_fm.get_num_tags_count() as usize * 2
+                    + scan_fm.get_num_tags_count() as usize * file_metadata::TAG_SLOT_SIZE
                     + scan_fm.get_filename_len() as usize;
                 let block_size = full_fm_size
                     + scan_fm.get_length() as usize
@@ -1954,11 +1856,11 @@ impl Archive {
                 .copy_from_slice(&rem_fem.as_bytes());
         }
 
-        // Update FDE offset field (bytes 9..14 of the FDE entry)
+        // Update FDE offset field (bytes 11..16 of the FDE entry)
         let fde_base = self.section_offset[FLDR_S as usize]
-            + 4
-            + fileno as usize * file_directory_entry::SIZE_BYTES as usize;
-        self.mmap_mut[fde_base + 9..fde_base + 14]
+            + DIR_SECTION_HEADER_BYTES
+            + fileno as usize * file_directory_entry::SIZE_BYTES;
+        self.mmap_mut[fde_base + 11..fde_base + 16]
             .copy_from_slice(&(new_off as u64).to_be_bytes()[3..]);
 
         Ok(())
@@ -1983,7 +1885,7 @@ impl Archive {
         let parent = 0; // Or resolve parent if needed
         let filename = file.name.clone();
         let tags: Vec<String> = file.tags.iter().cloned().collect();
-        let tagnos: Vec<u16> = tags
+        let tagnos: Vec<u32> = tags
             .iter()
             .filter_map(|tag| {
                 self.get_tde_from_tagname(tag.clone())
@@ -2092,7 +1994,7 @@ impl Archive {
      * @param fileno the file number of the file to remove.
      * @return io::Result<()> indicating success or failure.
      */
-    pub fn remove_file(&mut self, fileno: u16) -> io::Result<()> {
+    pub fn remove_file(&mut self, fileno: u32) -> io::Result<()> {
         // 1. Mark file metadata as invalid
         let fde = self.get_fde(fileno)?;
         let offset = fde.get_offset();
@@ -2136,7 +2038,7 @@ impl Archive {
      * @param tagno the tag number of the tag to remove.
      * @return io::Result<()> indicating success or failure.
      */
-    pub fn remove_tag(&mut self, tagno: u16) -> io::Result<()> {
+    pub fn remove_tag(&mut self, tagno: u32) -> io::Result<()> {
         // 1. Remove tag from all file metadata entries
         self._remove_tagno_from_all_file_metadata(tagno)?;
 
@@ -2163,7 +2065,7 @@ impl Archive {
      * @return io::Result<Option<FileInstance>> containing the FileInstance
      * if found, or None if not found.
      */
-    pub fn read_file(&mut self, fileno: u16) -> io::Result<Option<FileInstance>> {
+    pub fn read_file(&mut self, fileno: u32) -> io::Result<Option<FileInstance>> {
         // 1. Find file directory entry
         let fde = match self.get_fde(fileno) {
             Ok(fde) if fde.is_valid() => fde,
@@ -2217,7 +2119,7 @@ impl Archive {
      * @param fileno the file number to read.
      * @return the file data bytes.
      */
-    pub fn read_file_data(&mut self, fileno: u16) -> io::Result<Vec<u8>> {
+    pub fn read_file_data(&mut self, fileno: u32) -> io::Result<Vec<u8>> {
         let fde = self.get_fde(fileno)?;
         if !fde.is_valid() {
             return Err(io::Error::new(
@@ -2243,7 +2145,7 @@ impl Archive {
      * @param new_data the replacement data bytes.
      * @return Ok(true) if data was written, Ok(false) if content was unchanged.
      */
-    pub fn update_file_data(&mut self, fileno: u16, new_data: Vec<u8>) -> io::Result<bool> {
+    pub fn update_file_data(&mut self, fileno: u32, new_data: Vec<u8>) -> io::Result<bool> {
         let fde = self.get_fde(fileno)?;
         let old_offset = fde.get_offset();
         let fm = self.get_fm(old_offset)?;
@@ -2276,7 +2178,7 @@ impl Archive {
 
         // Scan for a free block large enough for new FM + data + end-metadata
         let mut new_off: Option<usize> = None;
-        let mut scan = 4usize; // skip 4-byte section header
+        let mut scan = S4_HEADER_BYTES;
         while scan + file_metadata::BASE_SIZE_BYTES < self.file_storage_section_size as usize {
             let scan_start = self.section_offset[FLST_S as usize] + scan;
             let base: Vec<u8> = self.mmap_mut
@@ -2284,7 +2186,7 @@ impl Archive {
                 .to_vec();
             let scan_fm = file_metadata::FileMetadata::from_bytes(base);
             let full_fm_size = file_metadata::BASE_SIZE_BYTES
-                + scan_fm.get_num_tags_count() as usize * 2
+                + scan_fm.get_num_tags_count() as usize * file_metadata::TAG_SLOT_SIZE
                 + scan_fm.get_filename_len() as usize;
             let block_size = full_fm_size
                 + scan_fm.get_length() as usize
@@ -2298,7 +2200,7 @@ impl Archive {
 
         if new_off.is_none() {
             self._resize_archive()?;
-            let mut scan = 4usize; // skip 4-byte section header
+            let mut scan = S4_HEADER_BYTES;
             while scan + file_metadata::BASE_SIZE_BYTES < self.file_storage_section_size as usize {
                 let scan_start = self.section_offset[FLST_S as usize] + scan;
                 let base: Vec<u8> = self.mmap_mut
@@ -2306,7 +2208,7 @@ impl Archive {
                     .to_vec();
                 let scan_fm = file_metadata::FileMetadata::from_bytes(base);
                 let full_fm_size = file_metadata::BASE_SIZE_BYTES
-                    + scan_fm.get_num_tags_count() as usize * 2
+                    + scan_fm.get_num_tags_count() as usize * file_metadata::TAG_SLOT_SIZE
                     + scan_fm.get_filename_len() as usize;
                 let block_size = full_fm_size
                     + scan_fm.get_length() as usize
@@ -2343,13 +2245,13 @@ impl Archive {
         self.file_storage_section_size_used +=
             new_fm.size_bytes() as u64 + new_length + file_end_metadata::SIZE_BYTES as u64;
 
-        // Update FDE: length+valid (bytes 0..5) and offset (bytes 9..14)
+        // Update FDE: length+valid (bytes 0..5) and offset (bytes 11..16)
         let fde_base = self.section_offset[FLDR_S as usize]
-            + 4
-            + fileno as usize * file_directory_entry::SIZE_BYTES as usize;
+            + DIR_SECTION_HEADER_BYTES
+            + fileno as usize * file_directory_entry::SIZE_BYTES;
         self.mmap_mut[fde_base..fde_base + 5]
             .copy_from_slice(&((new_length << 1) | 1).to_be_bytes()[3..]);
-        self.mmap_mut[fde_base + 9..fde_base + 14]
+        self.mmap_mut[fde_base + 11..fde_base + 16]
             .copy_from_slice(&(dest as u64).to_be_bytes()[3..]);
 
         return Ok(true);
@@ -2384,8 +2286,8 @@ impl Archive {
      */
     pub fn create(
         path: String,
-        file_dir_slots: u16,
-        tag_dir_slots: u16,
+        file_dir_slots: u32,
+        tag_dir_slots: u32,
         tag_lookup_size: usize,
         file_storage_space: usize,
     ) -> io::Result<NamedFile> {
@@ -2394,46 +2296,47 @@ impl Archive {
         const BUF_SIZE: usize = 1024 * 1024;
         let byte_buf: [u8; BUF_SIZE] = [0; BUF_SIZE];
 
-        // Write section 0
-        // Section 0 = 2-byte magic + 4 × 6-byte pointers = 26 bytes.
-        // Each header below is 2×u16 = 4 bytes; bit-width values from spec are divided by 8.
+        // Section 0: 2-byte magic + 4×6-byte section offsets = 26 bytes.
+        // Sections 1/2/3 headers are 2×u32 = 8 bytes each.
         file.write(&MAGIC_NUMBER.to_be_bytes()[2..4])?;
         let mut offset: u64 = (48 * 4 + 16) / 8; // 26 bytes
         file.write(&offset.to_be_bytes()[2..8])?;
-        offset += 4 + file_directory_entry::SIZE_BYTES as u64 * file_dir_slots as u64;
+        offset += DIR_SECTION_HEADER_BYTES as u64
+            + file_directory_entry::SIZE_BYTES as u64 * file_dir_slots as u64;
         file.write(&offset.to_be_bytes()[2..8])?;
-        offset += 4 + tag_directory_entry::SIZE_BYTES as u64 * tag_dir_slots as u64;
+        offset += DIR_SECTION_HEADER_BYTES as u64
+            + tag_directory_entry::SIZE_BYTES as u64 * tag_dir_slots as u64;
         file.write(&offset.to_be_bytes()[2..8])?;
-        offset += 4 + tag_lookup_size as u64; // section 3 header = 2×u16 = 4 bytes
+        offset += DIR_SECTION_HEADER_BYTES as u64 + tag_lookup_size as u64;
         file.write(&offset.to_be_bytes()[2..8])?;
 
-        // Write section 1
+        // Section 1: 2×u32 header + FDE slots
         file.write(&file_dir_slots.to_be_bytes())?;
-        file.write(&0u16.to_be_bytes())?;
+        file.write(&0u32.to_be_bytes())?;
         for _ in 0..file_dir_slots {
-            file.write(&byte_buf[0..file_directory_entry::SIZE_BYTES as usize])?;
+            file.write(&byte_buf[0..file_directory_entry::SIZE_BYTES])?;
         }
 
-        // Write section 2
+        // Section 2: 2×u32 header + TDE slots
         file.write(&tag_dir_slots.to_be_bytes())?;
-        file.write(&0u16.to_be_bytes())?;
+        file.write(&0u32.to_be_bytes())?;
         for _ in 0..tag_dir_slots {
-            file.write(&byte_buf[0..tag_directory_entry::SIZE_BYTES as usize])?;
+            file.write(&byte_buf[0..tag_directory_entry::SIZE_BYTES])?;
         }
 
-        // Write section 3
-        file.write(&(tag_lookup_size as u16).to_be_bytes())?;
-        file.write(&0u16.to_be_bytes())?;
-        let mut bytes_left = tag_lookup_size as usize;
+        // Section 3: 2×u32 header + TLE data region
+        file.write(&(tag_lookup_size as u32).to_be_bytes())?;
+        file.write(&0u32.to_be_bytes())?;
+        let mut bytes_left = tag_lookup_size;
         while bytes_left > 0 {
             let bytes_written = file.write(&byte_buf[0..bytes_left.min(BUF_SIZE)])?;
             bytes_left -= bytes_written;
         }
 
-        // Write section 4 (4-byte header + initial free FM block + data region + FEM)
-        file.write(&[0u8; 4])?;
+        // Section 4: 4-byte header + initial free FM block + data region + FEM
+        file.write(&[0u8; S4_HEADER_BYTES])?;
         let file_length = (file_storage_space
-            - 4
+            - S4_HEADER_BYTES
             - file_metadata::FileMetadata::calculate_needed_size(0, 0)
             - file_end_metadata::SIZE_BYTES as usize) as u64;
         let init_fm = file_metadata::FileMetadata::new(0, file_length, false, 0, 0, "", vec![]);
