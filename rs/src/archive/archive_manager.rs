@@ -1111,4 +1111,99 @@ mod tests {
         assert_eq!(manager.open_files.len(), 0);
         Ok(())
     }
+
+    #[test]
+    fn lt_lists_all_tags() -> io::Result<()> {
+        let home = TempDir::new()?;
+        let _guard = ScopedHome::set(home.path());
+        let config = RunConfiguration::new(std::env::args());
+        let rc = Arc::new(config);
+        let mut manager = ArchiveManager::new(Arc::clone(&rc));
+
+        let archive_dir = TempDir::new()?;
+        let archive_path = archive_dir
+            .path()
+            .join("archive.dat")
+            .to_string_lossy()
+            .to_string();
+        manager.create_archive_file(archive_path)?;
+
+        // Import a file and tag it with two tags
+        let source = TempDir::new()?;
+        let src_file = source.path().join("tagged.txt");
+        fs::write(&src_file, b"content")?;
+        manager.import_files(vec![src_file.to_string_lossy().to_string()], false)?;
+        manager.add_tags(
+            vec!["tagged.txt".to_string()],
+            vec!["alpha".to_string(), "beta".to_string()],
+        )?;
+
+        // list_tags must not return an error; verify the tags exist in the archive
+        let archive = manager.archive.as_mut().unwrap();
+        let mut found: Vec<String> = Vec::new();
+        for tagno in 0..archive.num_tag_dir_slots() {
+            let tde = archive.get_tde(tagno)?;
+            if tde.is_valid() {
+                found.push(tde.get_name());
+            }
+        }
+        found.sort();
+        assert_eq!(found, vec!["alpha", "beta"],
+            "expected exactly tags 'alpha' and 'beta'");
+
+        // list_tags() itself must succeed (smoke-test the printing path)
+        manager.list_tags()?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn stat_shows_file_metadata() -> io::Result<()> {
+        let home = TempDir::new()?;
+        let _guard = ScopedHome::set(home.path());
+        let config = RunConfiguration::new(std::env::args());
+        let rc = Arc::new(config);
+        let mut manager = ArchiveManager::new(Arc::clone(&rc));
+
+        let archive_dir = TempDir::new()?;
+        let archive_path = archive_dir
+            .path()
+            .join("archive.dat")
+            .to_string_lossy()
+            .to_string();
+        manager.create_archive_file(archive_path)?;
+
+        let source = TempDir::new()?;
+        let src_file = source.path().join("info.txt");
+        fs::write(&src_file, b"hello")?;
+        manager.import_files(vec![src_file.to_string_lossy().to_string()], false)?;
+        manager.add_tags(
+            vec!["info.txt".to_string()],
+            vec!["docs".to_string()],
+        )?;
+
+        // stat must succeed and produce correct metadata
+        let archive = manager.archive.as_mut().unwrap();
+        let fdes = archive.get_fde_by_filename("info.txt".to_string())?;
+        let fde = fdes.into_iter().find(|f| f.is_valid())
+            .expect("info.txt should be in the archive");
+        let fm = archive.get_fm(fde.get_offset())?;
+
+        assert_eq!(fm.get_filename(), "info.txt");
+        assert_eq!(fm.get_length(), 5, "file length should match written bytes");
+
+        let tag_names: Vec<String> = fm
+            .get_tags()
+            .iter()
+            .filter_map(|&tagno| archive.get_tde(tagno).ok())
+            .filter(|tde| tde.is_valid())
+            .map(|tde| tde.get_name())
+            .collect();
+        assert_eq!(tag_names, vec!["docs"], "file should have tag 'docs'");
+
+        // stat_file() itself must succeed (smoke-test the printing path)
+        manager.stat_file("info.txt".to_string())?;
+
+        Ok(())
+    }
 }
