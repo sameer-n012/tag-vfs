@@ -149,11 +149,11 @@ impl CommandLineApp {
             ("open",    "[-f <file> ...] [-t <tag> ...]            ", "open files with system viewer"),
             ("import",  "<file> ... [-r]                           ", "import files into the archive"),
             ("remove",  "-f <file> ... -t <tag> ...                ", "remove files from the archive"),
-            ("tag",     "-f <file> ... -t <tag> ... [-d]           ", "add (or -d: remove) tags"),
+            ("tag",     "<tag> ... [-f <file> ...] [-t <filter>...] [-d]", "add (or -d: remove) tags to matching files"),
             ("ls",      "[<tag> ...]                                ", "list files with all given tags"),
             ("lt",      "                                           ", "list all tags with file counts"),
             ("stat",    "<file>                                     ", "show file metadata and tags"),
-            ("sz",      "[<tag> ...]                                ", "combined size of matching files"),
+            ("sz",      "[-f <file> ...] [-t <tag> ...]             ", "combined size of matching files"),
             ("flush",   "[-f <file> ...] [-t <tag> ...] [-a] [-d]  ", "write cached files to archive"),
             ("destroy", "[-f <file> ...] [-t <tag> ...] [-a]       ", "discard cached files"),
             ("expand",  "<dest> [-f <src.dat>]                     ", "expand archive to a directory"),
@@ -224,19 +224,21 @@ impl CommandLineApp {
     }
 
     /**
-     * Adds or removes tags from files matching the given filenames.
+     * Adds or removes tags from files matching the given filters.
+     * Positionals are the tags to add/remove; -f and -t select which files to modify.
      *
-     * @param args -f for filenames, -t for tags, -d to remove instead of add.
+     * @param args positionals: tags to add/remove; -f file filter; -t tag filter; -d to remove.
      */
     fn cli_tag(&mut self, args: ParsedArgs) -> bool {
-        if args.filenames.is_empty() || args.tags.is_empty() {
-            println!("Usage: tag -f <file> ... -t <tag> ... [-d]");
+        if args.positionals.is_empty() {
+            println!("Usage: tag <tag> ... [-f <file> ...] [-t <filter-tag> ...] [-d]");
             return false;
         }
+        let tags_to_modify = args.positionals;
         let result = if args.flags.contains(&'d') {
-            self.app.am().remove_tags(args.filenames, args.tags)
+            self.app.am().remove_tags(tags_to_modify, args.filenames, args.tags)
         } else {
-            self.app.am().add_tags(args.filenames, args.tags)
+            self.app.am().add_tags(tags_to_modify, args.filenames, args.tags)
         };
         if let Err(e) = result {
             println!("{} {}", style::bold_red("Error:"), e);
@@ -259,14 +261,15 @@ impl CommandLineApp {
     }
 
     /**
-     * Prints the combined size of files matching the given tags.
-     * With no tags, prints the total size of every file.
+     * Prints the combined size of files matching the given filters.
+     * With no filters, prints the total size of every file.
      *
-     * @param args positional tag names (no -t flag needed).
+     * @param args -f for filenames, -t for tags (positionals also accepted as tag shorthand).
      */
     fn cli_size(&mut self, args: ParsedArgs) -> bool {
-        let tags = if !args.positionals.is_empty() { args.positionals } else { args.tags };
-        if let Err(e) = self.app.am().size_of(tags) {
+        let mut tags = args.tags;
+        tags.extend(args.positionals);
+        if let Err(e) = self.app.am().size_of(args.filenames, tags) {
             println!("{} {}", style::bold_red("Error:"), e);
         }
         false

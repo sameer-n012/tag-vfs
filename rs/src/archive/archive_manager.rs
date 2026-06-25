@@ -538,15 +538,17 @@ impl ArchiveManager {
     }
 
     /*
-     * Adds the given tags to every file matching the given filenames. Tags
+     * Adds the given tags to every file matching the file/tag filters. Tags
      * that do not yet exist in the archive are created automatically.
+     * With no filters, adds the tags to every file in the archive.
      *
-     * @param filenames the filenames to match.
-     * @param tags the tag names to add.
+     * @param tags_to_add the tag names to add.
+     * @param file_filter filenames to match (-f); empty = no filename constraint.
+     * @param tag_filter tags files must have (-t, AND); empty = no tag constraint.
      * @return io::Result<()> indicating success or failure.
      */
-    pub fn add_tags(&mut self, filenames: Vec<String>, tags: Vec<String>) -> io::Result<()> {
-        if filenames.is_empty() || tags.is_empty() {
+    pub fn add_tags(&mut self, tags_to_add: Vec<String>, file_filter: Vec<String>, tag_filter: Vec<String>) -> io::Result<()> {
+        if tags_to_add.is_empty() {
             return Ok(());
         }
         let archive = self
@@ -556,7 +558,7 @@ impl ArchiveManager {
 
         // Resolve tag names to tagnos, creating missing tags
         let mut tagnos: Vec<u32> = Vec::new();
-        for tagname in &tags {
+        for tagname in &tags_to_add {
             let tagno = match archive.get_tde_from_tagname(tagname.clone())? {
                 Some(tde) => tde.get_tagno(),
                 None => {
@@ -570,7 +572,15 @@ impl ArchiveManager {
             tagnos.push(tagno);
         }
 
-        let filenos = collect_matching_filenos(archive, &filenames, &[])?;
+        let filenos = if file_filter.is_empty() && tag_filter.is_empty() {
+            (0..archive.num_file_dir_slots())
+                .filter_map(|i| archive.get_fde(i).ok())
+                .filter(|fde| fde.is_valid())
+                .map(|fde| fde.get_fileno())
+                .collect()
+        } else {
+            collect_matching_filenos(archive, &file_filter, &tag_filter)?
+        };
         for fileno in filenos {
             let fde = archive.get_fde(fileno)?;
             let fm = archive.get_fm(fde.get_offset())?;
@@ -593,15 +603,17 @@ impl ArchiveManager {
     }
 
     /*
-     * Removes the given tags from every file matching the given filenames.
+     * Removes the given tags from every file matching the file/tag filters.
      * Tags or files that do not exist are silently ignored.
+     * With no filters, removes the tags from every file in the archive.
      *
-     * @param filenames the filenames to match.
-     * @param tags the tag names to remove.
+     * @param tags_to_remove the tag names to remove.
+     * @param file_filter filenames to match (-f); empty = no filename constraint.
+     * @param tag_filter tags files must have (-t, AND); empty = no tag constraint.
      * @return io::Result<()> indicating success or failure.
      */
-    pub fn remove_tags(&mut self, filenames: Vec<String>, tags: Vec<String>) -> io::Result<()> {
-        if filenames.is_empty() || tags.is_empty() {
+    pub fn remove_tags(&mut self, tags_to_remove: Vec<String>, file_filter: Vec<String>, tag_filter: Vec<String>) -> io::Result<()> {
+        if tags_to_remove.is_empty() {
             return Ok(());
         }
         let archive = self
@@ -611,7 +623,7 @@ impl ArchiveManager {
 
         // Resolve tag names, skipping unknown tags
         let mut tagnos: Vec<u32> = Vec::new();
-        for tagname in &tags {
+        for tagname in &tags_to_remove {
             if let Some(tde) = archive.get_tde_from_tagname(tagname.clone())? {
                 tagnos.push(tde.get_tagno());
             }
@@ -620,7 +632,15 @@ impl ArchiveManager {
             return Ok(());
         }
 
-        let filenos = collect_matching_filenos(archive, &filenames, &[])?;
+        let filenos = if file_filter.is_empty() && tag_filter.is_empty() {
+            (0..archive.num_file_dir_slots())
+                .filter_map(|i| archive.get_fde(i).ok())
+                .filter(|fde| fde.is_valid())
+                .map(|fde| fde.get_fileno())
+                .collect()
+        } else {
+            collect_matching_filenos(archive, &file_filter, &tag_filter)?
+        };
         for fileno in filenos {
             let fde = archive.get_fde(fileno)?;
             let fm = archive.get_fm(fde.get_offset())?;
@@ -677,28 +697,28 @@ impl ArchiveManager {
     }
 
     /*
-     * Prints the combined size of all files in the archive that have all of
-     * the given tags. If no tags are provided, prints the combined size of
-     * every valid file.
+     * Prints the combined size of all files matching the given filters.
+     * Files must match any given filename AND have all given tags (AND semantics).
+     * With no filters, prints the combined size of every valid file.
      *
-     * @param tags the tag names to filter by (all must be present).
+     * @param filenames filenames to match (-f); empty = no filename constraint.
+     * @param tags tag names files must have (-t, AND); empty = no tag constraint.
      * @return io::Result<()> indicating success or failure.
      */
-    pub fn size_of(&mut self, tags: Vec<String>) -> io::Result<()> {
+    pub fn size_of(&mut self, filenames: Vec<String>, tags: Vec<String>) -> io::Result<()> {
         let archive = self
             .archive
             .as_mut()
             .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
 
-        let filenos: Vec<u32> = if tags.is_empty() {
+        let filenos: Vec<u32> = if filenames.is_empty() && tags.is_empty() {
             (0..archive.num_file_dir_slots())
                 .filter_map(|i| archive.get_fde(i).ok())
                 .filter(|fde| fde.is_valid())
                 .map(|fde| fde.get_fileno())
                 .collect()
         } else {
-            let empty: Vec<String> = Vec::new();
-            collect_matching_filenos(archive, &empty, &tags)?
+            collect_matching_filenos(archive, &filenames, &tags)?
         };
 
         let mut total: u64 = 0;
@@ -1181,8 +1201,9 @@ mod tests {
         fs::write(&src_file, b"content")?;
         manager.import_files(vec![src_file.to_string_lossy().to_string()], false)?;
         manager.add_tags(
-            vec!["tagged.txt".to_string()],
             vec!["alpha".to_string(), "beta".to_string()],
+            vec!["tagged.txt".to_string()],
+            vec![],
         )?;
 
         // list_tags must not return an error; verify the tags exist in the archive
@@ -1225,8 +1246,9 @@ mod tests {
         fs::write(&src_file, b"hello")?;
         manager.import_files(vec![src_file.to_string_lossy().to_string()], false)?;
         manager.add_tags(
-            vec!["info.txt".to_string()],
             vec!["docs".to_string()],
+            vec!["info.txt".to_string()],
+            vec![],
         )?;
 
         // stat must succeed and produce correct metadata
