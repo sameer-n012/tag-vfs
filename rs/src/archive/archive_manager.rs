@@ -362,10 +362,6 @@ impl ArchiveManager {
             }
         }
 
-        for (cache_key, ..) in &work {
-            self.open_files.remove(cache_key);
-        }
-
         return Ok(());
     }
 
@@ -374,40 +370,29 @@ impl ArchiveManager {
     }
 
     /**
-     * Flushes matching cached files to the archive, then deletes their cached copies.
+     * Flushes matching cached files to the archive, then destroys the cached copies.
+     * With no filters, flushes and destroys all open files.
      *
      * @param filenames the filenames to match (empty = no filename filter).
      * @param tags the tag names to match (empty = no tag filter).
      * @return io::Result<()> indicating success or failure.
      */
     pub fn flush_and_destroy(&mut self, filenames: Vec<String>, tags: Vec<String>) -> io::Result<()> {
-        // Snapshot paths before flush so we can delete the ones that get removed.
-        let before: Vec<(u16, String)> = self.open_files.iter()
-            .map(|(&k, v)| (k, v.path.clone()))
-            .collect();
-        self.flush(filenames, tags)?;
-        for (key, path) in &before {
-            if !self.open_files.contains_key(key) {
-                let _ = fs::remove_file(path);
-            }
+        self.flush(filenames.clone(), tags.clone())?;
+        if filenames.is_empty() && tags.is_empty() {
+            return self.destroy_all();
         }
-        return Ok(());
+        return self.destroy(filenames, tags);
     }
 
     /**
-     * Flushes all cached files to the archive, then deletes all cached copies.
+     * Flushes all cached files to the archive, then destroys all cached copies.
      *
      * @return io::Result<()> indicating success or failure.
      */
     pub fn flush_all_and_destroy(&mut self) -> io::Result<()> {
-        let paths: Vec<String> = self.open_files.values()
-            .map(|v| v.path.clone())
-            .collect();
         self.flush_all()?;
-        for path in paths {
-            let _ = fs::remove_file(&path);
-        }
-        return Ok(());
+        return self.destroy_all();
     }
 
     pub fn destroy(&mut self, filenames: Vec<String>, tags: Vec<String>) -> io::Result<()> {
@@ -990,7 +975,7 @@ mod tests {
     }
 
     #[test]
-    fn flush_removes_cached_file_by_name() -> io::Result<()> {
+    fn flush_writes_to_archive_keeps_file_open() -> io::Result<()> {
         let home = TempDir::new()?;
         let _guard = ScopedHome::set(home.path());
         let config = RunConfiguration::new(std::env::args());
@@ -1013,10 +998,10 @@ mod tests {
         manager.cache(source_file.to_string_lossy().to_string(), false)?;
         assert_eq!(manager.open_files.len(), 1);
 
-        // flush adds the cached file to the archive as a new entry
+        // flush writes to archive but file remains open in cache
         manager.flush(vec!["cache_flush.txt".to_string()], vec![])?;
 
-        assert!(manager.open_files.is_empty());
+        assert_eq!(manager.open_files.len(), 1);
         let cached_path = Path::new(&rc.get_cache_path_absolute()).join("cache_flush.txt");
         assert!(cached_path.exists());
         Ok(())
