@@ -57,7 +57,12 @@ fn parse_args(tokens: &[&str]) -> ParsedArgs {
             }
         }
     }
-    ParsedArgs { positionals, filenames, tags, flags }
+    ParsedArgs {
+        positionals,
+        filenames,
+        tags,
+        flags,
+    }
 }
 
 impl CommandLineApp {
@@ -104,27 +109,32 @@ impl CommandLineApp {
         let cmd = tokens[0];
         let args = parse_args(&tokens[1..]);
         match cmd {
-            "quit"    => self.cli_quit(),
-            "help"    => self.cli_help(),
-            "open"    => self.cli_open(args),
-            "import"  => self.cli_import(args),
-            "remove"  => self.cli_remove(args),
-            "tag"     => self.cli_tag(args),
-            "ls"      => self.cli_list(args),
-            "sz"      => self.cli_size(args),
-            "flush"   => self.cli_flush(args),
+            "quit" => self.cli_quit(),
+            "help" => self.cli_help(),
+            "open" => self.cli_open(args),
+            "import" => self.cli_import(args),
+            "remove" => self.cli_remove(args),
+            "tag" => self.cli_tag(args),
+            "ls" => self.cli_list(args),
+            "sz" => self.cli_size(args),
+            "flush" => self.cli_flush(args),
             "destroy" => self.cli_destroy(args),
-            "expand"  => self.cli_expand(args),
-            "reduce"  => self.cli_reduce(args),
-            "merge"   => self.cli_merge(args),
-            "config"  => self.cli_config(args),
-            "lt"      => self.cli_list_tags(),
-            "stat"    => self.cli_stat(args),
-            "apply"   => self.cli_apply(args),
-            "scrape"  => self.cli_scrape(args),
+            "expand" => self.cli_expand(args),
+            "reduce" => self.cli_reduce(args),
+            "merge" => self.cli_merge(args),
+            "config" => self.cli_config(args),
+            "lt" => self.cli_list_tags(),
+            "stat" => self.cli_stat(args),
+            "disk" => self.cli_disk(),
+            "apply" => self.cli_apply(args),
+            "scrape" => self.cli_scrape(args),
             _ => {
-                println!("{} '{}'. Type {} for available commands.",
-                    style::bold_red("Unknown command:"), cmd, style::bold_cyan("help"));
+                println!(
+                    "{} '{}'. Type {} for available commands.",
+                    style::bold_red("Unknown command:"),
+                    cmd,
+                    style::bold_cyan("help")
+                );
                 false
             }
         }
@@ -146,31 +156,113 @@ impl CommandLineApp {
     fn cli_help(&self) -> bool {
         // Each entry: (name, args, description). Name is padded to 8 chars visually.
         let entries: &[(&str, &str, &str)] = &[
-            ("open",    "[-f <file> ...] [-t <tag> ...]            ", "open files with system viewer"),
-            ("import",  "<file> ... [-r]                           ", "import files into the archive"),
-            ("remove",  "-f <file> ... -t <tag> ...                ", "remove files from the archive"),
-            ("tag",     "<tag> ... [-f <file> ...] [-t <filter>...] [-d]", "add (or -d: remove) tags to matching files"),
-            ("ls",      "[<tag> ...]                                ", "list files with all given tags"),
-            ("lt",      "                                           ", "list all tags with file counts"),
-            ("stat",    "<file>                                     ", "show file metadata and tags"),
-            ("sz",      "[-f <file> ...] [-t <tag> ...]             ", "combined size of matching files"),
-            ("flush",   "[-f <file> ...] [-t <tag> ...] [-a] [-d]  ", "write cached files to archive"),
-            ("destroy", "[-f <file> ...] [-t <tag> ...] [-a]       ", "discard cached files"),
-            ("expand",  "<dest> [-f <src.dat>]                     ", "expand archive to a directory"),
-            ("reduce",  "<file> ... [-r]                           ", "compress files into archive"),
-            ("merge",   "<file.dat>                                ", "merge archive into this one"),
-            ("config",  "<key> <value> [-p] [-l]                   ", "set or list config values"),
-            ("apply",   "<script> [-f <file> ...] [-t <tag> ...]   ", "apply script to files"),
-            ("scrape",  "[-f <file> ...] [-t <tag> ...]            ", "scrape link files"),
-            ("help",    "                                           ", "show this help text"),
-            ("quit",    "                                           ", "quit the application"),
+            (
+                "open",
+                "[-f <file> ...] [-t <tag> ...]            ",
+                "open files with system viewer",
+            ),
+            (
+                "import",
+                "<file> ... [-r]                           ",
+                "import files into the archive",
+            ),
+            (
+                "remove",
+                "-f <file> ... -t <tag> ...                ",
+                "remove files from the archive",
+            ),
+            (
+                "tag",
+                "<tag> ... [-f <file> ...] [-t <tag>...] [-d]",
+                "add (or -d: remove) tags to matching files",
+            ),
+            (
+                "ls",
+                "[<tag> ...]                                ",
+                "list files with all given tags",
+            ),
+            (
+                "lt",
+                "                                           ",
+                "list all tags with file counts",
+            ),
+            (
+                "stat",
+                "<file>                                     ",
+                "show file metadata and tags",
+            ),
+            (
+                "disk",
+                "                                           ",
+                "show archive space usage per section",
+            ),
+            (
+                "sz",
+                "[-f <file> ...] [-t <tag> ...]             ",
+                "combined size of matching files",
+            ),
+            (
+                "flush",
+                "[-f <file> ...] [-t <tag> ...] [-a] [-d]  ",
+                "write cached files to archive",
+            ),
+            (
+                "destroy",
+                "[-f <file> ...] [-t <tag> ...] [-a]       ",
+                "discard cached files",
+            ),
+            (
+                "expand",
+                "<dest> [-f <src.dat>]                     ",
+                "expand archive to a directory",
+            ),
+            (
+                "reduce",
+                "<file> ... [-r]                           ",
+                "compress files into archive",
+            ),
+            (
+                "merge",
+                "<file.dat>                                ",
+                "merge archive into this one",
+            ),
+            (
+                "config",
+                "<key> <value> [-p] [-l]                   ",
+                "set or list config values",
+            ),
+            (
+                "apply",
+                "<script> [-f <file> ...] [-t <tag> ...]   ",
+                "apply script to files",
+            ),
+            (
+                "scrape",
+                "[-f <file> ...] [-t <tag> ...]            ",
+                "scrape link files",
+            ),
+            (
+                "help",
+                "                                           ",
+                "show this help text",
+            ),
+            (
+                "quit",
+                "                                           ",
+                "quit the application",
+            ),
         ];
         println!("{}", style::bold("Commands:"));
         for (name, args, desc) in entries {
             // Pad visually: name.len() chars wide, then rest is literal string
             let pad = " ".repeat(9usize.saturating_sub(name.len()));
-            println!("  {}{}{}{}",
-                style::bold_cyan(name), pad, args, style::dim(desc));
+            println!(
+                "  {}{}{}{}",
+                style::bold_cyan(name),
+                pad,
+                args,
+                style::dim(desc)
+            );
         }
         false
     }
@@ -236,9 +328,13 @@ impl CommandLineApp {
         }
         let tags_to_modify = args.positionals;
         let result = if args.flags.contains(&'d') {
-            self.app.am().remove_tags(tags_to_modify, args.filenames, args.tags)
+            self.app
+                .am()
+                .remove_tags(tags_to_modify, args.filenames, args.tags)
         } else {
-            self.app.am().add_tags(tags_to_modify, args.filenames, args.tags)
+            self.app
+                .am()
+                .add_tags(tags_to_modify, args.filenames, args.tags)
         };
         if let Err(e) = result {
             println!("{} {}", style::bold_red("Error:"), e);
@@ -253,7 +349,11 @@ impl CommandLineApp {
      * @param args positional tag names (no -t flag needed).
      */
     fn cli_list(&mut self, args: ParsedArgs) -> bool {
-        let tags = if !args.positionals.is_empty() { args.positionals } else { args.tags };
+        let tags = if !args.positionals.is_empty() {
+            args.positionals
+        } else {
+            args.tags
+        };
         if let Err(e) = self.app.am().list_files(tags) {
             println!("{} {}", style::bold_red("Error:"), e);
         }
@@ -418,12 +518,25 @@ impl CommandLineApp {
     }
 
     /**
+     * Prints archive disk usage: file/tag counts and per-section space usage.
+     */
+    fn cli_disk(&mut self) -> bool {
+        if let Err(e) = self.app.am().disk_info() {
+            println!("{} {}", style::bold_red("Error:"), e);
+        }
+        false
+    }
+
+    /**
      * Prints metadata for a named file in the archive.
      *
      * @param args positional filename (or -f <filename>).
      */
     fn cli_stat(&mut self, args: ParsedArgs) -> bool {
-        let filename = match args.positionals.into_iter().next()
+        let filename = match args
+            .positionals
+            .into_iter()
+            .next()
             .or_else(|| args.filenames.into_iter().next())
         {
             Some(f) => f,

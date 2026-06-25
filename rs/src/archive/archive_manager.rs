@@ -816,6 +816,76 @@ impl ArchiveManager {
         return Ok(());
     }
 
+    /**
+     * Prints disk usage statistics for the archive: file and tag counts,
+     * and per-section space usage (used / total, with a fill-factor bar).
+     *
+     * @return io::Result<()> indicating success or failure.
+     */
+    pub fn disk_info(&mut self) -> io::Result<()> {
+        use crate::archive::file_directory_entry;
+        use crate::archive::tag_directory_entry;
+
+        let archive = self
+            .archive
+            .as_mut()
+            .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
+
+        let files_used  = archive.num_file_dir_slots_used();
+        let files_total = archive.num_file_dir_slots();
+        let tags_used   = archive.num_tag_dir_slots_used();
+        let tags_total  = archive.num_tag_dir_slots();
+        let tl_used     = archive.tag_lookup_section_size_used() as u64;
+        let tl_total    = archive.tag_lookup_section_size() as u64;
+        let tl_tuples   = archive.num_tag_lookup_tuples();
+        let fs_used     = archive.file_storage_section_size_used();
+        let fs_total    = archive.file_storage_section_size();
+        let arc_total   = archive.archive_size() as u64;
+
+        let s1_used_bytes = files_used as u64 * file_directory_entry::SIZE_BYTES as u64;
+        let s1_total_bytes = files_total as u64 * file_directory_entry::SIZE_BYTES as u64;
+        let s2_used_bytes = tags_used as u64 * tag_directory_entry::SIZE_BYTES as u64;
+        let s2_total_bytes = tags_total as u64 * tag_directory_entry::SIZE_BYTES as u64;
+
+        fn bar(used: u64, total: u64) -> String {
+            let width = 20usize;
+            let filled = if total == 0 { 0 } else {
+                ((used as f64 / total as f64) * width as f64).round() as usize
+            }.min(width);
+            let pct = if total == 0 { 0.0 } else { used as f64 / total as f64 * 100.0 };
+            format!("[{}{}] {:.0}%", "█".repeat(filled), "░".repeat(width - filled), pct)
+        }
+
+        println!("{}", style::bold("Archive Disk Usage"));
+        println!("  {}  {}", style::dim("total size:"), style::bold(&format_size(arc_total)));
+        println!("  {}      {}", style::dim("files:"), style::bold(&format!("{} / {}", files_used, files_total)));
+        println!("  {}       {}", style::dim("tags:"), style::bold(&format!("{} / {}", tags_used, tags_total)));
+        println!();
+        println!("{}", style::bold("Sections"));
+        println!("  {} {}  {}",
+            style::dim("S1 file dir:"),
+            bar(s1_used_bytes, s1_total_bytes),
+            format!("{} / {} ({} / {} slots)",
+                format_size(s1_used_bytes), format_size(s1_total_bytes),
+                files_used, files_total));
+        println!("  {} {}  {}",
+            style::dim("S2  tag dir:"),
+            bar(s2_used_bytes, s2_total_bytes),
+            format!("{} / {} ({} / {} slots)",
+                format_size(s2_used_bytes), format_size(s2_total_bytes),
+                tags_used, tags_total));
+        println!("  {} {}  {}",
+            style::dim("S3 tag lkup:"),
+            bar(tl_used, tl_total),
+            format!("{} / {} ({} tuples)",
+                format_size(tl_used), format_size(tl_total), tl_tuples));
+        println!("  {} {}  {}",
+            style::dim("S4 file stg:"),
+            bar(fs_used, fs_total),
+            format!("{} / {}", format_size(fs_used), format_size(fs_total)));
+        return Ok(());
+    }
+
     pub fn apply(
         &self,
         _filenames: Vec<String>,
