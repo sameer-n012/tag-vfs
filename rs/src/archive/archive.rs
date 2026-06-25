@@ -1088,14 +1088,13 @@ impl Archive {
      */
     fn _allocate_file_space(
         &mut self,
-        offset: u64,
         length: u64,
         fileno: u32,
         parent: u32,
         filename: String,
         filetype: u8,
         tags: Vec<u32>,
-    ) -> io::Result<file_metadata::FileMetadata> {
+    ) -> io::Result<(file_metadata::FileMetadata, u64)> {
         // Check for available space or resize
         let mut offset: u64 = 0;
         let mut need_resize: bool;
@@ -1210,7 +1209,7 @@ impl Archive {
                 .copy_from_slice(&rem_fem.as_bytes());
         }
 
-        return Ok(fm);
+        return Ok((fm, offset));
     }
 
     /**
@@ -1973,15 +1972,7 @@ impl Archive {
 
         // 1.1 Allocate file storage (metadata, data, end-metadata)
         let fileno = self.num_file_dir_slots_used;
-        let metadata_offset = self._find_file_space(
-            length,
-            file_metadata::FileMetadata::calculate_needed_size(
-                tagnos.len() as u16,
-                filename.len() as u8,
-            ) as u64,
-        )?;
-        let fm = self._allocate_file_space(
-            metadata_offset,
+        let (fm, metadata_offset) = self._allocate_file_space(
             length,
             fileno,
             parent,
@@ -2145,6 +2136,9 @@ impl Archive {
         // 2. Read file metadata
         let offset = fde.get_offset();
         let fm = self.get_fm(offset)?;
+        if !fm.is_valid() {
+            return Ok(None);
+        }
 
         // 3. Read file data
         let data_offset = self.section_offset[FLST_S as usize] + offset as usize + fm.size_bytes();
