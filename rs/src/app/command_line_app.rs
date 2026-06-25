@@ -280,24 +280,21 @@ impl CommandLineApp {
      */
     fn cli_flush(&mut self, args: ParsedArgs) -> bool {
         let destroy_after = args.flags.contains(&'d');
-        let result = if args.flags.contains(&'a') {
-            self.app.am().flush_all()
+        let flush_all = args.flags.contains(&'a');
+
+        let result = if flush_all {
+            if destroy_after {
+                self.app.am().flush_all_and_destroy()
+            } else {
+                self.app.am().flush_all()
+            }
+        } else if destroy_after {
+            self.app.am().flush_and_destroy(args.filenames, args.tags)
         } else {
-            self.app.am().flush(args.filenames.clone(), args.tags.clone())
+            self.app.am().flush(args.filenames, args.tags)
         };
         if let Err(e) = result {
             println!("{} {}", style::bold_red("Error:"), e);
-            return false;
-        }
-        if destroy_after {
-            let result = if args.flags.contains(&'a') {
-                self.app.am().destroy_all()
-            } else {
-                self.app.am().destroy(args.filenames, args.tags)
-            };
-            if let Err(e) = result {
-                println!("{} {}", style::bold_red("Error:"), e);
-            }
         }
         false
     }

@@ -279,7 +279,12 @@ impl RunConfiguration {
 
 impl fmt::Display for RunConfiguration {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // TODO pretty print
-        write!(f, "Run Configuration")
+        let mut pairs: Vec<(&String, &String)> = self.config_map.iter().collect();
+        pairs.sort_by_key(|(k, _)| k.as_str());
+        writeln!(f, "Run Configuration:")?;
+        for (key, value) in pairs {
+            writeln!(f, "  {} = {}", key, value)?;
+        }
+        return Ok(());
     }
 }

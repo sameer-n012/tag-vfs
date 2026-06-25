@@ -373,29 +373,90 @@ impl ArchiveManager {
         self.flush(Vec::new(), Vec::new())
     }
 
-    pub fn destroy(&mut self, filenames: Vec<String>, _tags: Vec<String>) -> io::Result<()> {
+    /**
+     * Flushes matching cached files to the archive, then deletes their cached copies.
+     *
+     * @param filenames the filenames to match (empty = no filename filter).
+     * @param tags the tag names to match (empty = no tag filter).
+     * @return io::Result<()> indicating success or failure.
+     */
+    pub fn flush_and_destroy(&mut self, filenames: Vec<String>, tags: Vec<String>) -> io::Result<()> {
+        // Snapshot paths before flush so we can delete the ones that get removed.
+        let before: Vec<(u16, String)> = self.open_files.iter()
+            .map(|(&k, v)| (k, v.path.clone()))
+            .collect();
+        self.flush(filenames, tags)?;
+        for (key, path) in &before {
+            if !self.open_files.contains_key(key) {
+                let _ = fs::remove_file(path);
+            }
+        }
+        return Ok(());
+    }
+
+    /**
+     * Flushes all cached files to the archive, then deletes all cached copies.
+     *
+     * @return io::Result<()> indicating success or failure.
+     */
+    pub fn flush_all_and_destroy(&mut self) -> io::Result<()> {
+        let paths: Vec<String> = self.open_files.values()
+            .map(|v| v.path.clone())
+            .collect();
+        self.flush_all()?;
+        for path in paths {
+            let _ = fs::remove_file(&path);
+        }
+        return Ok(());
+    }
+
+    pub fn destroy(&mut self, filenames: Vec<String>, tags: Vec<String>) -> io::Result<()> {
         if self.open_files.is_empty() {
             return Err(io::Error::new(ErrorKind::NotFound, "No cached files"));
         }
 
-        if filenames.is_empty() {
+        if filenames.is_empty() && tags.is_empty() {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput,
-                "Must specify at least one filename to destroy",
+                "Must specify at least one filename or tag to destroy",
             ));
         }
 
-        let filter: HashSet<String> = filenames
-            .into_iter()
-            .map(|name| name.to_ascii_lowercase())
-            .collect();
+        // Build a set of allowed names from the filename filter.
+        let name_filter: Option<HashSet<String>> = if filenames.is_empty() {
+            None
+        } else {
+            Some(filenames.into_iter().map(|n| n.to_ascii_lowercase()).collect())
+        };
+
+        // If tags are given, resolve which archive filenames have all of those tags.
+        let tag_names: Option<HashSet<String>> = if tags.is_empty() {
+            None
+        } else {
+            let archive = self
+                .archive
+                .as_mut()
+                .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
+            let filenos = collect_matching_filenos(archive, &[], &tags)?;
+            let mut set = HashSet::new();
+            for fileno in filenos {
+                if let Ok(Some(fi)) = archive.read_file(fileno) {
+                    set.insert(fi.name.to_ascii_lowercase());
+                }
+            }
+            Some(set)
+        };
 
         let mut removed = Vec::new();
-        for (&fileno, named) in self.open_files.iter() {
-            if let Some(name) = Path::new(&named.path).file_name().and_then(|n| n.to_str()) {
-                if filter.contains(&name.to_ascii_lowercase()) {
-                    removed.push((fileno, named.path.clone()));
-                }
+        for (&key, named) in self.open_files.iter() {
+            let name = match Path::new(&named.path).file_name().and_then(|n| n.to_str()) {
+                Some(n) => n.to_ascii_lowercase(),
+                None => continue,
+            };
+            let passes_name = name_filter.as_ref().map_or(true, |f| f.contains(&name));
+            let passes_tag = tag_names.as_ref().map_or(true, |f| f.contains(&name));
+            if passes_name && passes_tag {
+                removed.push((key, named.path.clone()));
             }
         }
 
@@ -406,8 +467,8 @@ impl ArchiveManager {
             ));
         }
 
-        for (fileno, path) in removed {
-            self.open_files.remove(&fileno);
+        for (key, path) in removed {
+            self.open_files.remove(&key);
             let _ = fs::remove_file(&path);
         }
 
@@ -656,12 +717,13 @@ impl ArchiveManager {
         };
 
         let mut total: u64 = 0;
+        let count = filenos.len();
         for fileno in filenos {
             if let Ok(fde) = archive.get_fde(fileno) {
                 total += fde.get_length();
             }
         }
-        println!("{}", format_size(total));
+        println!("{} ({} file{})", format_size(total), count, if count == 1 { "" } else { "s" });
         Ok(())
     }
 
