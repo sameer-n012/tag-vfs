@@ -167,7 +167,7 @@ impl Archive {
      * before the temporary file is renamed to the original file.
      *
      */
-    fn _resize_archive(&mut self) -> io::Result<()> {
+    fn _resize_archive(&mut self, min_s4_free_bytes: u64) -> io::Result<()> {
         {
             let _l1 = self.head_l.write().unwrap();
             let _l2 = self.fldr_l.write().unwrap();
@@ -216,6 +216,12 @@ impl Archive {
             {
                 new_file_storage_section_size =
                     self.file_storage_section_size * RESIZE_FACTOR as u64;
+            }
+            // Ensure there is room for min_s4_free_bytes regardless of fill factor.
+            let min_required = self.file_storage_section_size_used + min_s4_free_bytes;
+            if new_file_storage_section_size < min_required {
+                new_file_storage_section_size =
+                    (self.file_storage_section_size * RESIZE_FACTOR as u64).max(min_required);
             }
 
             // Section 0: 2-byte magic + 4×6-byte offsets = 26 bytes
@@ -659,7 +665,7 @@ impl Archive {
             }
         }
         if need_resize {
-            self._resize_archive()?;
+            self._resize_archive(0)?;
         }
 
         let lock = self.fldr_l.write().unwrap();
@@ -761,7 +767,7 @@ impl Archive {
             }
         }
         if need_resize {
-            self._resize_archive()?;
+            self._resize_archive(0)?;
         }
 
         let lock = self.tgdr_l.write().unwrap();
@@ -936,7 +942,7 @@ impl Archive {
         };
 
         if new_offset.is_none() {
-            self._resize_archive()?;
+            self._resize_archive(0)?;
             let lock = self.tglk_l.read().unwrap();
             new_offset = find_free_slot(
                 &self.mmap_mut,
@@ -1107,9 +1113,15 @@ impl Archive {
             Err(_) => need_resize = true,
         }
 
-        // If space not found, attempt to resize
+        // If space not found, resize ensuring enough room for this specific file.
         if need_resize {
-            self._resize_archive()?;
+            let metadata_len = file_metadata::FileMetadata::calculate_needed_size(
+                tags.len() as u16,
+                filename.len() as u8,
+            ) as u64;
+            let space_needed =
+                length + metadata_len + file_end_metadata::SIZE_BYTES as u64;
+            self._resize_archive(space_needed)?;
             match self._find_file_space(
                 length,
                 file_metadata::FileMetadata::calculate_needed_size(
@@ -1835,7 +1847,7 @@ impl Archive {
         }
 
         if new_offset.is_none() {
-            self._resize_archive()?;
+            self._resize_archive(0)?;
             let mut scan = S4_HEADER_BYTES;
             while scan + file_metadata::BASE_SIZE_BYTES < self.file_storage_section_size as usize {
                 let scan_start = self.section_offset[FLST_S as usize] + scan;
@@ -2254,7 +2266,7 @@ impl Archive {
         }
 
         if new_off.is_none() {
-            self._resize_archive()?;
+            self._resize_archive(0)?;
             let mut scan = S4_HEADER_BYTES;
             while scan + file_metadata::BASE_SIZE_BYTES < self.file_storage_section_size as usize {
                 let scan_start = self.section_offset[FLST_S as usize] + scan;
