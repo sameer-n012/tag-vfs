@@ -112,6 +112,7 @@ When constructing binary entry types, build a `Vec<u8>` with `Vec::with_capacity
 11. ~~`_allocate_file_space` never split the free block~~ **Fixed.** After placing a file the remainder is now written as a new free FM+FEM so future scans find it.
 12. ~~`_read_s1_meta` computed `file_storage_section_size_used` by reading FDE bytes with wrong strides~~ **Fixed.** Replaced with `_compute_storage_used()`, which scans section 4 directly and sums valid block sizes. Called at the end of `Archive::new()`.
 13. ~~`get_filename()` in `FileMetadata` sliced to end of buffer~~ **Fixed.** Now slices to `start + filename_len` to avoid including trailing bytes.
+14. ~~`_resize_archive` left two adjacent free blocks after growing S4~~ **Fixed.** The resize appended a new free block after copying the old section verbatim; the old section already ended with its own free block. `_coalesce_flst()` is now called at the end of `_resize_archive` to merge them, enabling imports of files larger than the original S4 capacity.
 
 ## Architectural Issues — All Fixed
 

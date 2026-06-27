@@ -358,6 +358,7 @@ impl Archive {
         self._read_s2_meta()?;
         self._read_s3_meta()?;
         self._read_s4_meta()?;
+        self._coalesce_flst()?;
 
         Ok(())
     }
