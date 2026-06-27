@@ -1331,7 +1331,7 @@ impl Archive {
         let mut offset = 4; // skip section header
         let section_end = self.file_storage_section_size as usize;
 
-        while offset < section_end {
+        while offset + file_metadata::BASE_SIZE_BYTES <= section_end {
             // Read metadata
             let meta_start = self.section_offset[FLST_S as usize] + offset;
             let mut meta_buf = vec![0u8; file_metadata::BASE_SIZE_BYTES];
@@ -1342,17 +1342,19 @@ impl Archive {
 
             let length = fm.get_length() as usize;
             let valid = fm.is_valid();
+            // Full FM size accounts for variable-length fields even on invalidated file blocks.
+            let full_fm_size = file_metadata::BASE_SIZE_BYTES
+                + fm.get_num_tags_count() as usize * file_metadata::TAG_SLOT_SIZE
+                + fm.get_filename_len() as usize;
 
             // Find contiguous invalid regions
             if !valid {
                 let mut free_start = offset;
-                let mut free_len = file_metadata::BASE_SIZE_BYTES
-                    + length
-                    + file_end_metadata::SIZE_BYTES as usize;
+                let mut free_len = full_fm_size + length + file_end_metadata::SIZE_BYTES as usize;
                 let mut next_offset = offset + free_len;
 
                 // Merge with subsequent invalid regions
-                while next_offset < section_end {
+                while next_offset + file_metadata::BASE_SIZE_BYTES <= section_end {
                     let next_meta_start = self.section_offset[FLST_S as usize] + next_offset;
                     let mut next_meta_buf = vec![0u8; file_metadata::BASE_SIZE_BYTES];
                     next_meta_buf.copy_from_slice(
@@ -1362,15 +1364,18 @@ impl Archive {
                     let next_fm = file_metadata::FileMetadata::from_bytes(next_meta_buf.clone());
                     let next_length = next_fm.get_length() as usize;
                     let next_valid = next_fm.is_valid();
+                    let next_full_fm_size = file_metadata::BASE_SIZE_BYTES
+                        + next_fm.get_num_tags_count() as usize * file_metadata::TAG_SLOT_SIZE
+                        + next_fm.get_filename_len() as usize;
 
                     if next_valid {
                         break;
                     }
                     // Merge this region
-                    free_len += file_metadata::BASE_SIZE_BYTES
+                    free_len += next_full_fm_size
                         + next_length
                         + file_end_metadata::SIZE_BYTES as usize;
-                    next_offset += file_metadata::BASE_SIZE_BYTES
+                    next_offset += next_full_fm_size
                         + next_length
                         + file_end_metadata::SIZE_BYTES as usize;
                 }
