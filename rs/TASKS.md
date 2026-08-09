@@ -1,9 +1,9 @@
-# Archive Manager Implementation Tasks
+# Archive Manager Implementation Tasks [Done]
 
 Break down `src/archive/archive_manager.rs` method implementations into single-function work units (~5 minutes each).
 
-1. [DONE] `cache`: copy the named file into the cache directory, creating parents, and store the `NamedFile` in `open_files`; log actions and respect `open` flag.
-2. [DONE] `flush`: send one or more cached files/tags into the archive (using planned `Archive` helpers), verify persistence, and surface errors.
+1. `cache`: copy the named file into the cache directory, creating parents, and store the `NamedFile` in `open_files`; log actions and respect `open` flag.
+2.  `flush`: send one or more cached files/tags into the archive (using planned `Archive` helpers), verify persistence, and surface errors.
 3. `flush_all`: iterate over `open_files`, call `flush` on every cached entry, and clean obsolete cache files afterwards.
 4. `destroy`: remove matching cached files/tags from the cache without persisting, updating `open_files`.
 5. `destroy_all`: purge every cached file and reset `open_files` while leaving the archive untouched.
@@ -24,7 +24,7 @@ Break down `src/archive/archive_manager.rs` method implementations into single-f
 
 Each task should return meaningful `io::Result` errors, log progress for diagnostics, and be called from the CLI once done.
 
-## Archive Internal Tasks
+## Archive Internal Tasks [Done]
 20. `get_fde`: implement lookup of a file directory entry by fileno against section 1, validating slot bounds.
 21. `get_fde_by_filename`: search the file directory for the slot whose filename hash matches the requested path.
 22. `get_tde`: read a tag directory entry and interpret its metadata (valid bit, name, lookup offset).

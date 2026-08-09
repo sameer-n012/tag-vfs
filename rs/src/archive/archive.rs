@@ -218,7 +218,8 @@ impl Archive {
                     self.file_storage_section_size * RESIZE_FACTOR as u64;
             }
             // Ensure there is room for min_s4_free_bytes regardless of fill factor.
-            let min_required = self.file_storage_section_size_used + min_s4_free_bytes;
+            let min_required =
+                (self.file_storage_section_size_used + min_s4_free_bytes) * RESIZE_FACTOR as u64;
             if new_file_storage_section_size < min_required {
                 new_file_storage_section_size =
                     (self.file_storage_section_size * RESIZE_FACTOR as u64).max(min_required);
@@ -359,6 +360,7 @@ impl Archive {
         self._read_s3_meta()?;
         self._read_s4_meta()?;
         self._coalesce_flst()?;
+        self._compute_storage_used()?;
 
         Ok(())
     }
@@ -1119,8 +1121,7 @@ impl Archive {
                 tags.len() as u16,
                 filename.len() as u8,
             ) as u64;
-            let space_needed =
-                length + metadata_len + file_end_metadata::SIZE_BYTES as u64;
+            let space_needed = length + metadata_len + file_end_metadata::SIZE_BYTES as u64;
             self._resize_archive(space_needed)?;
             match self._find_file_space(
                 length,
@@ -1372,12 +1373,10 @@ impl Archive {
                         break;
                     }
                     // Merge this region
-                    free_len += next_full_fm_size
-                        + next_length
-                        + file_end_metadata::SIZE_BYTES as usize;
-                    next_offset += next_full_fm_size
-                        + next_length
-                        + file_end_metadata::SIZE_BYTES as usize;
+                    free_len +=
+                        next_full_fm_size + next_length + file_end_metadata::SIZE_BYTES as usize;
+                    next_offset +=
+                        next_full_fm_size + next_length + file_end_metadata::SIZE_BYTES as usize;
                 }
 
                 // Write a single free block (metadata with valid=0, length=free_len - metadata - endmeta)
@@ -1651,19 +1650,32 @@ impl Archive {
     /// Removes a tag number from all file metadata entries.
     fn _remove_tagno_from_all_file_metadata(&mut self, tagno: u32) -> io::Result<()> {
         let mut offset = S4_HEADER_BYTES;
-        while offset < self.file_storage_section_size as usize {
+        while offset + file_metadata::BASE_SIZE_BYTES <= self.file_storage_section_size as usize {
             let meta_start = self.section_offset[FLST_S as usize] + offset;
-            let mut meta_buf = vec![0u8; file_metadata::BASE_SIZE_BYTES];
-            meta_buf.copy_from_slice(
-                &self.mmap_mut[meta_start..meta_start + file_metadata::BASE_SIZE_BYTES],
-            );
-            let fm = file_metadata::FileMetadata::from_bytes(meta_buf.clone());
-            if fm.is_valid() {
+            // Read the fixed-size base first to determine variable-length fields.
+            let base_buf: Vec<u8> =
+                self.mmap_mut[meta_start..meta_start + file_metadata::BASE_SIZE_BYTES].to_vec();
+            let base_fm = file_metadata::FileMetadata::from_bytes(base_buf);
+            let num_tags = base_fm.get_num_tags_count() as usize;
+            let filename_len = base_fm.get_filename_len() as usize;
+            let full_fm_size = file_metadata::BASE_SIZE_BYTES
+                + num_tags * file_metadata::TAG_SLOT_SIZE
+                + filename_len;
+            let data_len = base_fm.get_length() as usize;
+            let block_size = full_fm_size + data_len + file_end_metadata::SIZE_BYTES as usize;
+            if block_size <= file_metadata::BASE_SIZE_BYTES + file_end_metadata::SIZE_BYTES as usize
+            {
+                break;
+            }
+            if base_fm.is_valid() {
+                // Re-read the full FM (including tag IDs and filename) before calling get_tags().
+                let full_buf: Vec<u8> =
+                    self.mmap_mut[meta_start..meta_start + full_fm_size].to_vec();
+                let fm = file_metadata::FileMetadata::from_bytes(full_buf);
                 let mut tags = fm.get_tags();
                 let orig_len = tags.len();
                 tags.retain(|&t| t != tagno);
                 if tags.len() != orig_len {
-                    // Write back updated metadata
                     let new_fm = file_metadata::FileMetadata::new(
                         fm.get_fileno(),
                         fm.get_length(),
@@ -1677,9 +1689,7 @@ impl Archive {
                         .copy_from_slice(&new_fm.as_bytes());
                 }
             }
-            let length = fm.get_length() as usize;
-            offset +=
-                file_metadata::BASE_SIZE_BYTES + length + file_end_metadata::SIZE_BYTES as usize;
+            offset += block_size;
         }
         Ok(())
     }

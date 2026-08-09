@@ -37,8 +37,9 @@ Sub-points indicate optional arguments
 - `stat <file>` shows metadata for a named file (size, type, tags)
 - `sz <tag1> ...` lists the combined size of all files with given tags
 - `remove -f <file1> ... -t <tag1> ...` removes the files with the given filenames and tags from the `.dat` storage file
-- `tag -f <file1> ... -t <tag1> ...` adds a set of tags to a set of files
+- `tag <tags_to_add> -f <file1> ... -t <tag1> ...` adds a set of tags to a set of files
   - `-d` removes the set of tags from a set of files
+- `disk` shows the disk usage of the `.dat` storage file and its sections
 
 # Format of Storage File
 
