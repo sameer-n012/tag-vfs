@@ -112,3 +112,7 @@ bash tests/run_all.sh
 ```
 
 See [CLAUDE.md](CLAUDE.md) for full test details.
+
+## Releases
+
+Every push to `main` builds macOS release binaries and publishes them to the GitHub Releases page (`.github/workflows/release.yml`). The release is tagged `v<version>`, read from `Cargo.toml`. **Bump the version in `Cargo.toml` before pushing to `main`** — if a release for the current version already exists, the workflow fails instead of overwriting it.

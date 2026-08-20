@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Read version from Cargo.toml
+        id: version
+        run: |
+          VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Fail if this version was already released
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "::error::Release $TAG already exists. Bump the version in Cargo.toml before pushing to main."
+            exit 1
+          fi
+
+      - name: Build release binaries
+        run: cargo build --release --bin tag-vfs --bin tag-vfs-cli
+
+      - name: Package binaries
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          mkdir -p dist
+          tar -czf "dist/tag-vfs-macos-$TAG.tar.gz" -C target/release tag-vfs
+          tar -czf "dist/tag-vfs-cli-macos-$TAG.tar.gz" -C target/release tag-vfs-cli
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          gh release create "$TAG" \
+            "dist/tag-vfs-macos-$TAG.tar.gz" \
+            "dist/tag-vfs-cli-macos-$TAG.tar.gz" \
+            --repo "${{ github.repository }}" \
+            --title "tag-vfs $TAG" \
+            --generate-notes
