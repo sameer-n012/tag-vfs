@@ -98,7 +98,7 @@ fn expand_archive(archive: &mut Archive, dest: &Path) -> io::Result<()> {
 }
 
 // Formats a byte count as a human-readable string.
-fn format_size(bytes: u64) -> String {
+pub(crate) fn format_size(bytes: u64) -> String {
     if bytes == 0 {
         return "0 B".to_string();
     }
@@ -110,6 +110,29 @@ fn format_size(bytes: u64) -> String {
         bytes as f64 / 1024_f64.powi(exp as i32),
         units[exp]
     )
+}
+
+/*
+ * Disk usage statistics for the archive: file/tag counts and per-section
+ * byte usage. Returned by disk_info_data() for callers (like the GUI) that
+ * need the raw numbers instead of the printed report from disk_info().
+ */
+#[derive(Clone, Copy)]
+pub struct DiskInfo {
+    pub archive_total_bytes: u64,
+    pub files_used: u32,
+    pub files_total: u32,
+    pub tags_used: u32,
+    pub tags_total: u32,
+    pub s1_used_bytes: u64,
+    pub s1_total_bytes: u64,
+    pub s2_used_bytes: u64,
+    pub s2_total_bytes: u64,
+    pub s3_used_bytes: u64,
+    pub s3_total_bytes: u64,
+    pub s3_tuples: u32,
+    pub s4_used_bytes: u64,
+    pub s4_total_bytes: u64,
 }
 
 pub struct ArchiveManager {
@@ -672,6 +695,22 @@ impl ArchiveManager {
      * @return io::Result<()> indicating success or failure.
      */
     pub fn list_files(&mut self, tags: Vec<String>) -> io::Result<()> {
+        for file in self.list_files_data(tags)? {
+            println!("{}", file.to_string());
+        }
+        Ok(())
+    }
+
+    /*
+     * Returns every file in the archive that has all of the given tags. If no
+     * tags are provided, returns every valid file in the archive. Unlike
+     * list_files, this does not print; callers get the FileInstance data
+     * directly (used by the GUI's file list).
+     *
+     * @param tags the tag names to filter by (all must be present).
+     * @return io::Result<Vec<FileInstance>> the matching files.
+     */
+    pub fn list_files_data(&mut self, tags: Vec<String>) -> io::Result<Vec<FileInstance>> {
         let archive = self
             .archive
             .as_mut()
@@ -688,12 +727,13 @@ impl ArchiveManager {
             collect_matching_filenos(archive, &empty, &tags)?
         };
 
+        let mut files = Vec::new();
         for fileno in filenos {
             if let Ok(Some(file)) = archive.read_file(fileno) {
-                println!("{}", file.to_string());
+                files.push(file);
             }
         }
-        Ok(())
+        Ok(files)
     }
 
     /*
@@ -739,28 +779,67 @@ impl ArchiveManager {
      * @return io::Result<()> indicating success or failure.
      */
     pub fn list_tags(&mut self) -> io::Result<()> {
+        let tags = self.list_tags_data()?;
+        if tags.is_empty() {
+            println!("{}", style::dim("No tags in archive."));
+        }
+        for (name, file_count) in tags {
+            println!("{} {}",
+                style::bold_cyan(&name),
+                style::dim(&format!("({} file{})", file_count, if file_count == 1 { "" } else { "s" })));
+        }
+        return Ok(());
+    }
+
+    /*
+     * Returns every tag in the archive, paired with the number of files that
+     * have that tag. Unlike list_tags, this does not print; callers get the
+     * data directly (used by the GUI's tag sidebar).
+     *
+     * @return io::Result<Vec<(String, usize)>> tag name and file count pairs.
+     */
+    pub fn list_tags_data(&mut self) -> io::Result<Vec<(String, usize)>> {
         let archive = self
             .archive
             .as_mut()
             .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
 
-        let mut count = 0u32;
+        let mut tags = Vec::new();
         for tagno in 0..archive.num_tag_dir_slots() {
             let tde = archive.get_tde(tagno)?;
             if !tde.is_valid() {
                 continue;
             }
             let filenos = archive._get_all_filenos_for_tag(tagno)?;
-            let file_count = filenos.len();
-            println!("{} {}",
-                style::bold_cyan(&tde.get_name()),
-                style::dim(&format!("({} file{})", file_count, if file_count == 1 { "" } else { "s" })));
-            count += 1;
+            tags.push((tde.get_name(), filenos.len()));
         }
-        if count == 0 {
-            println!("{}", style::dim("No tags in archive."));
-        }
-        return Ok(());
+        Ok(tags)
+    }
+
+    /*
+     * Returns the raw file data for the first valid file matching the given
+     * filename. Used by the GUI to load image/video bytes for previews.
+     *
+     * @param filename the filename to look up.
+     * @return io::Result<Vec<u8>> the file's raw bytes.
+     */
+    pub fn read_file_bytes(&mut self, filename: String) -> io::Result<Vec<u8>> {
+        let archive = self
+            .archive
+            .as_mut()
+            .ok_or_else(|| io::Error::new(ErrorKind::Other, "No archive loaded"))?;
+
+        let fde = archive
+            .get_fde_by_filename(filename.clone())?
+            .into_iter()
+            .find(|fde| fde.is_valid())
+            .ok_or_else(|| {
+                io::Error::new(
+                    ErrorKind::NotFound,
+                    format!("File not found in archive: {}", filename),
+                )
+            })?;
+        archive.read_file_data(fde.get_fileno())
     }
 
     /*
@@ -823,6 +902,54 @@ impl ArchiveManager {
      * @return io::Result<()> indicating success or failure.
      */
     pub fn disk_info(&mut self) -> io::Result<()> {
+        let info = self.disk_info_data()?;
+
+        fn bar(used: u64, total: u64) -> String {
+            let width = 20usize;
+            let filled = if total == 0 { 0 } else {
+                ((used as f64 / total as f64) * width as f64).round() as usize
+            }.min(width);
+            let pct = if total == 0 { 0.0 } else { used as f64 / total as f64 * 100.0 };
+            format!("[{}{}] {:.0}%", "█".repeat(filled), "░".repeat(width - filled), pct)
+        }
+
+        println!("{}", style::bold("Archive Disk Usage"));
+        println!("  {}  {}", style::dim("total size:"), style::bold(&format_size(info.archive_total_bytes)));
+        println!("  {}      {}", style::dim("files:"), style::bold(&format!("{} / {}", info.files_used, info.files_total)));
+        println!("  {}       {}", style::dim("tags:"), style::bold(&format!("{} / {}", info.tags_used, info.tags_total)));
+        println!();
+        println!("{}", style::bold("Sections"));
+        println!("  {} {}  {}",
+            style::dim("S1 file dir:"),
+            bar(info.s1_used_bytes, info.s1_total_bytes),
+            format!("{} / {} ({} / {} slots)",
+                format_size(info.s1_used_bytes), format_size(info.s1_total_bytes),
+                info.files_used, info.files_total));
+        println!("  {} {}  {}",
+            style::dim("S2  tag dir:"),
+            bar(info.s2_used_bytes, info.s2_total_bytes),
+            format!("{} / {} ({} / {} slots)",
+                format_size(info.s2_used_bytes), format_size(info.s2_total_bytes),
+                info.tags_used, info.tags_total));
+        println!("  {} {}  {}",
+            style::dim("S3 tag lkup:"),
+            bar(info.s3_used_bytes, info.s3_total_bytes),
+            format!("{} / {} ({} tuples)",
+                format_size(info.s3_used_bytes), format_size(info.s3_total_bytes), info.s3_tuples));
+        println!("  {} {}  {}",
+            style::dim("S4 file stg:"),
+            bar(info.s4_used_bytes, info.s4_total_bytes),
+            format!("{} / {}", format_size(info.s4_used_bytes), format_size(info.s4_total_bytes)));
+        return Ok(());
+    }
+
+    /*
+     * Returns the same disk usage statistics as disk_info(), without
+     * printing. Used by the GUI's disk usage panel.
+     *
+     * @return io::Result<DiskInfo> file/tag counts and per-section byte usage.
+     */
+    pub fn disk_info_data(&mut self) -> io::Result<DiskInfo> {
         use crate::archive::file_directory_entry;
         use crate::archive::tag_directory_entry;
 
@@ -847,43 +974,22 @@ impl ArchiveManager {
         let s2_used_bytes = tags_used as u64 * tag_directory_entry::SIZE_BYTES as u64;
         let s2_total_bytes = tags_total as u64 * tag_directory_entry::SIZE_BYTES as u64;
 
-        fn bar(used: u64, total: u64) -> String {
-            let width = 20usize;
-            let filled = if total == 0 { 0 } else {
-                ((used as f64 / total as f64) * width as f64).round() as usize
-            }.min(width);
-            let pct = if total == 0 { 0.0 } else { used as f64 / total as f64 * 100.0 };
-            format!("[{}{}] {:.0}%", "█".repeat(filled), "░".repeat(width - filled), pct)
-        }
-
-        println!("{}", style::bold("Archive Disk Usage"));
-        println!("  {}  {}", style::dim("total size:"), style::bold(&format_size(arc_total)));
-        println!("  {}      {}", style::dim("files:"), style::bold(&format!("{} / {}", files_used, files_total)));
-        println!("  {}       {}", style::dim("tags:"), style::bold(&format!("{} / {}", tags_used, tags_total)));
-        println!();
-        println!("{}", style::bold("Sections"));
-        println!("  {} {}  {}",
-            style::dim("S1 file dir:"),
-            bar(s1_used_bytes, s1_total_bytes),
-            format!("{} / {} ({} / {} slots)",
-                format_size(s1_used_bytes), format_size(s1_total_bytes),
-                files_used, files_total));
-        println!("  {} {}  {}",
-            style::dim("S2  tag dir:"),
-            bar(s2_used_bytes, s2_total_bytes),
-            format!("{} / {} ({} / {} slots)",
-                format_size(s2_used_bytes), format_size(s2_total_bytes),
-                tags_used, tags_total));
-        println!("  {} {}  {}",
-            style::dim("S3 tag lkup:"),
-            bar(tl_used, tl_total),
-            format!("{} / {} ({} tuples)",
-                format_size(tl_used), format_size(tl_total), tl_tuples));
-        println!("  {} {}  {}",
-            style::dim("S4 file stg:"),
-            bar(fs_used, fs_total),
-            format!("{} / {}", format_size(fs_used), format_size(fs_total)));
-        return Ok(());
+        Ok(DiskInfo {
+            archive_total_bytes: arc_total,
+            files_used,
+            files_total,
+            tags_used,
+            tags_total,
+            s1_used_bytes,
+            s1_total_bytes,
+            s2_used_bytes,
+            s2_total_bytes,
+            s3_used_bytes: tl_used,
+            s3_total_bytes: tl_total,
+            s3_tuples: tl_tuples,
+            s4_used_bytes: fs_used,
+            s4_total_bytes: fs_total,
+        })
     }
 
     pub fn apply(

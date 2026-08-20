@@ -3,13 +3,14 @@ name = "tag-vfs"
 version = "0.1.0"
 edition = "2021"
 
-# [[bin]]
-# name = "server"
-# path = "src/server/main.rs"
+[[bin]]
+name = "tag-vfs"
+path = "src/bin/tag_vfs.rs"
+required-features = ["gui"]
 
-# [[bin]]
-# name = "cli"
-# path = "src/cli/main.rs"
+[[bin]]
+name = "tag-vfs-cli"
+path = "src/bin/tag_vfs_cli.rs"
 
 [dependencies]
 clap = { version = "4.0", features = ["derive"] }
@@ -17,6 +18,12 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 dirs = "4.0"
 memmap2 = "0.5"
+iced = { version = "0.14.0", optional = true }
+rfd = { version = "0.17.2", optional = true }
 
 [dev-dependencies]
 tempfile = "3.5"
+
+[features]
+default = ["gui"]
+gui = ["dep:iced", "dep:rfd", "iced/image"]

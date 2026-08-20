@@ -2,14 +2,16 @@
 
 This file lists every command in the `tag-vfs` interactive shell. It lists the flags for each command and the current implementation status.
 
+The project builds two binaries: `tag-vfs` (shell plus GUI) and `tag-vfs-cli` (shell only). Everything below applies to the interactive shell in both binaries, unless noted.
+
 ## Startup flags
 
-Use these flags when you start the binary, before the interactive shell opens.
+Use these flags when you start a binary, before the interactive shell (or GUI) opens.
 
 | Flag | Effect |
 |---|---|
 | `--home <DIR>` | Use `<DIR>` as the app home directory. The default is `~/filevault`. The archive file is `<DIR>/archive.dat`. The session cache is `<DIR>/tmp_<session_id>/`. |
-| `-g`, `--gui` | Set the `gui` config flag. (No GUI mode exists yet. This flag has no visible effect.) |
+| `-g`, `--gui` | Open the GUI instead of the interactive shell. Only `tag-vfs` reads this flag; `tag-vfs-cli` does not have GUI code and always opens the shell. See [../README.md](../README.md) for what the GUI covers. |
 
 ## Commands
 

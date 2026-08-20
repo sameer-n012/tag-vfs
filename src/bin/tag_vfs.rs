@@ -1,17 +1,8 @@
-#![allow(unused_variables, unused_parens)]
-
-mod app;
-mod archive;
-mod data;
-mod exceptions;
-mod loader;
-mod util;
-
-use app::command_line_app::CommandLineApp;
-use app::run_configuration::RunConfiguration;
 use std::env;
+use tag_vfs::app::command_line_app::CommandLineApp;
+use tag_vfs::app::run_configuration::RunConfiguration;
 
-fn main() {
+fn main() -> iced::Result {
     let mut config = RunConfiguration::new(env::args());
     // Config files are optional; missing files are silently ignored.
     let _ = config.parse_default_config_file();
@@ -22,10 +13,10 @@ fn main() {
     }
 
     if config.get_config_bool("gui") {
-        println!("GUI not yet supported");
-        std::process::exit(0);
+        tag_vfs::gui::run(config)
     } else {
         let mut app = CommandLineApp::new(config);
         app.run();
+        Ok(())
     }
 }
