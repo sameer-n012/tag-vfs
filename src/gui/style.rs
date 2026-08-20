@@ -2,7 +2,7 @@ use iced::widget::{button, container, text_input};
 use iced::{Background, Border, Color, Theme};
 
 // Color tokens. A warm brass/amber accent against a cool charcoal
-// background — the "vault" in File Vault — instead of the blue/purple/teal
+// background — evoking the archive's "vault" — instead of the blue/purple/teal
 // most iced apps default to.
 pub const BG: Color = Color::from_rgb(0x15 as f32 / 255.0, 0x17 as f32 / 255.0, 0x1C as f32 / 255.0);
 pub const SURFACE: Color = Color::from_rgb(0x1B as f32 / 255.0, 0x1E as f32 / 255.0, 0x25 as f32 / 255.0);

@@ -10,7 +10,7 @@ Use these flags when you start a binary, before the interactive shell (or GUI) o
 
 | Flag | Effect |
 |---|---|
-| `--home <DIR>` | Use `<DIR>` as the app home directory. The default is `~/filevault`. The archive file is `<DIR>/archive.dat`. The session cache is `<DIR>/tmp_<session_id>/`. |
+| `--home <DIR>` | Use `<DIR>` as the app home directory. The default is `~/tag_vfs`. The archive file is `<DIR>/archive.dat`. The session cache is `<DIR>/tmp_<session_id>/`. |
 | `-g`, `--gui` | Open the GUI instead of the interactive shell. Only `tag-vfs` reads this flag; `tag-vfs-cli` does not have GUI code and always opens the shell. See [../README.md](../README.md) for what the GUI covers. |
 
 ## Commands

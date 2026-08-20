@@ -1,6 +1,19 @@
+<div align="center">
+
 # tag-vfs
 
-`tag-vfs` (also called `file-vault`) is a tag-based virtual file system.
+**A tag-based virtual file system with a desktop GUI, built in Rust.**
+
+[![Release](https://img.shields.io/github/v/release/sameer-n012/tag-vfs?style=flat-square&color=e8a33d)](https://github.com/sameer-n012/tag-vfs/releases)
+[![Rust](https://img.shields.io/badge/rust-stable-e8a33d?style=flat-square)](https://www.rust-lang.org)
+
+<img src="assets/screenshot.png" alt="tag-vfs desktop GUI" width="800">
+
+</div>
+
+---
+
+`tag-vfs` is a tag-based virtual file system.
 
 The system stores files by tags. It does not use folders. You add one or more tags to each file. You find files by their tags, not by a folder path.
 
@@ -34,7 +47,7 @@ Run `tag-vfs-cli` to start the interactive command shell:
 cargo run --bin tag-vfs-cli
 ```
 
-The shell creates an archive at `~/filevault/archive.dat` on first run. Use `--home <DIR>` to pick a different location:
+The shell creates an archive at `~/tag_vfs/archive.dat` on first run. Use `--home <DIR>` to pick a different location:
 
 ```bash
 cargo run --bin tag-vfs-cli -- --home /path/to/data

@@ -14,8 +14,8 @@ pub struct RunConfiguration {
 }
 
 // static project information
-const APP_NAME: &'static str = "file-vault";
-const APP_NAME_PRETTY: &'static str = "File Vault";
+const APP_NAME: &'static str = "tag-vfs";
+const APP_NAME_PRETTY: &'static str = "Tag VFS";
 
 impl RunConfiguration {
     pub fn new(args: Args) -> Self {
@@ -78,7 +78,7 @@ impl RunConfiguration {
     }
 
     pub fn parse_command_line_args(&mut self) -> Result<(), String> {
-        let matches = Command::new("tvfs")
+        let matches = match Command::new("tvfs")
             .version("1.0")
             .about("A tag-based file system")
             .arg(
@@ -92,12 +92,18 @@ impl RunConfiguration {
             .arg(
                 Arg::new("home")
                     .long("home")
-                    .help("use this directory as the app home (default: ~/filevault)")
+                    .help("use this directory as the app home (default: ~/tag_vfs)")
                     .required(false)
                     .value_name("DIR"),
             )
             .try_get_matches_from(self.args.clone())
-            .unwrap_or_default();
+        {
+            Ok(matches) => matches,
+            // --help/--version print their message and exit 0; any other parse
+            // error prints to stderr and exits non-zero. Either way, this never
+            // returns, so the later code always sees a fully-parsed `matches`.
+            Err(e) => e.exit(),
+        };
 
         if matches.get_flag("gui") {
             self.config_map
@@ -106,10 +112,6 @@ impl RunConfiguration {
 
         if let Some(home) = matches.get_one::<String>("home") {
             self.config_map.insert("appHomePath".to_string(), home.to_string());
-        }
-
-        if matches.contains_id("help") {
-            std::process::exit(0);
         }
 
         Ok(())
@@ -153,7 +155,7 @@ impl RunConfiguration {
         if let Some(path) = self.config_map.get("appHomePath") {
             return path.clone();
         }
-        format!("{}/filevault", dirs::home_dir().unwrap().display())
+        format!("{}/tag_vfs", dirs::home_dir().unwrap().display())
     }
 
     pub fn get_cache_path_absolute(&self) -> String {

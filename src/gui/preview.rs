@@ -49,8 +49,8 @@ pub fn video_thumbnail(bytes: &[u8], ext: &str) -> Option<Vec<u8>> {
         .duration_since(std::time::UNIX_EPOCH)
         .ok()?
         .as_nanos();
-    let input_path = dir.join(format!("tag-vfs-preview-{}.{}", stamp, ext));
-    let output_path = dir.join(format!("tag-vfs-preview-{}.png", stamp));
+    let input_path = dir.join(format!("tag_vfs-preview-{}.{}", stamp, ext));
+    let output_path = dir.join(format!("tag_vfs-preview-{}.png", stamp));
 
     std::fs::write(&input_path, bytes).ok()?;
 

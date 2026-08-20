@@ -48,7 +48,7 @@ pub fn run(config: RunConfiguration) -> iced::Result {
         TagVfsGui::update,
         TagVfsGui::view,
     )
-    .title("File Vault")
+    .title("Tag VFS")
     .theme(TagVfsGui::theme)
     .subscription(TagVfsGui::subscription)
     .run()
@@ -466,7 +466,7 @@ impl TagVfsGui {
 
         let header = container(
             row![
-                text("File Vault").size(18).font(Font {
+                text("Tag VFS").size(18).font(Font {
                     weight: iced::font::Weight::Semibold,
                     ..Font::DEFAULT
                 }),
