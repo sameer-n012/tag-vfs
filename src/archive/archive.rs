@@ -17,10 +17,12 @@ use super::tag_lookup_entry::TagLookupEntry;
 
 // Constants
 const MAGIC_NUMBER: i32 = 13579;
-const ARCHIVE_COPY_TMP_FILENAME: &str = "_archive_copy_tmp.dat";
 const ARCHIVE_BACKUP_FILENAME: &str = "_archive_copy.dat.bak";
 
 const NUMBER_SECTIONS: u8 = 5;
+// Kept alongside the other section indices below for a complete, documented
+// enumeration (see CLAUDE.md); the header's offset is always 0 in practice.
+#[allow(dead_code)]
 const HEAD_S: u8 = 0; // header section
 const FLDR_S: u8 = 1; // file directory section
 const TGDR_S: u8 = 2; // tag directory section
@@ -124,11 +126,11 @@ impl Archive {
      * @return the backup file.
      */
     fn _backup_archive(&mut self) -> io::Result<()> {
-        let l1 = self.head_l.read().unwrap();
-        let l2 = self.fldr_l.read().unwrap();
-        let l3 = self.tgdr_l.read().unwrap();
-        let l4 = self.tglk_l.read().unwrap();
-        let l5 = self.flst_l.read().unwrap();
+        let _l1 = self.head_l.read().unwrap();
+        let _l2 = self.fldr_l.read().unwrap();
+        let _l3 = self.tgdr_l.read().unwrap();
+        let _l4 = self.tglk_l.read().unwrap();
+        let _l5 = self.flst_l.read().unwrap();
 
         let mut fp: PathBuf = PathBuf::from(self.fpath.clone());
         fp.pop();
@@ -163,8 +165,8 @@ impl Archive {
     /**
      * Resizes the archive based on the current fill factor. For each section, if the space used
      * is greater than Archive.RESIZE_FILL_FACTOR_THRESHOLD the archive section size is multiplied by
-     * Archive.RESIZE_FACTOR. The data is copied to a temporary file given by Archive.ARCHIVE_COPY_TMP_FILENAME
-     * before the temporary file is renamed to the original file.
+     * Archive.RESIZE_FACTOR. The data is copied to a temporary file named with
+     * Archive.ARCHIVE_BACKUP_FILENAME before the temporary file is renamed to the original file.
      *
      */
     fn _resize_archive(&mut self, min_s4_free_bytes: u64) -> io::Result<()> {
@@ -371,9 +373,9 @@ impl Archive {
      * @return true if the file is valid and false otherwise.
      */
     fn _validate_file_type(&self) -> io::Result<bool> {
-        let lock = self.head_l.read().unwrap();
+        let _lock = self.head_l.read().unwrap();
 
-        if (u16::from_be_bytes(self.mmap_mut[0..2].try_into().unwrap()) != MAGIC_NUMBER as u16) {
+        if u16::from_be_bytes(self.mmap_mut[0..2].try_into().unwrap()) != MAGIC_NUMBER as u16 {
             return Ok(false);
         }
         Ok(true)
@@ -386,7 +388,7 @@ impl Archive {
     fn _read_section_pointers(&mut self) -> io::Result<()> {
         // Read section pointers
 
-        let lock = self.head_l.write().unwrap();
+        let _lock = self.head_l.write().unwrap();
 
         for i in 1..NUMBER_SECTIONS {
             let mut buf = [0u8; 8];
@@ -403,7 +405,7 @@ impl Archive {
      *
      */
     fn _read_s1_meta(&mut self) -> io::Result<()> {
-        let lock = self.fldr_l.write().unwrap();
+        let _lock = self.fldr_l.write().unwrap();
 
         let base = self.section_offset[FLDR_S as usize];
         self.num_file_dir_slots =
@@ -455,7 +457,7 @@ impl Archive {
      *
      */
     fn _read_s2_meta(&mut self) -> io::Result<()> {
-        let lock = self.tgdr_l.write().unwrap();
+        let _lock = self.tgdr_l.write().unwrap();
 
         let base = self.section_offset[TGDR_S as usize];
         self.num_tag_dir_slots =
@@ -472,7 +474,7 @@ impl Archive {
      *
      */
     fn _read_s3_meta(&mut self) -> io::Result<()> {
-        let lock = self.tglk_l.write().unwrap();
+        let _lock = self.tglk_l.write().unwrap();
 
         let base = self.section_offset[TGLK_S as usize];
         self.tag_lookup_section_size =
@@ -489,7 +491,7 @@ impl Archive {
      *
      */
     fn _read_s4_meta(&mut self) -> io::Result<()> {
-        let lock = self.flst_l.write().unwrap();
+        let _lock = self.flst_l.write().unwrap();
         self.file_storage_section_size =
             (self.mmap_mut.len() - self.section_offset[FLST_S as usize]) as u64;
 
@@ -504,7 +506,7 @@ impl Archive {
      * @return a file directory entry.
      */
     pub fn get_fde(&mut self, fileno: u32) -> io::Result<file_directory_entry::FileDirectoryEntry> {
-        let lock = self.fldr_l.read().unwrap();
+        let _lock = self.fldr_l.read().unwrap();
 
         let start = self.section_offset[FLDR_S as usize]
             + DIR_SECTION_HEADER_BYTES
@@ -531,7 +533,7 @@ impl Archive {
         &mut self,
         filename: String,
     ) -> io::Result<Vec<file_directory_entry::FileDirectoryEntry>> {
-        let lock = self.fldr_l.read().unwrap();
+        let _lock = self.fldr_l.read().unwrap();
 
         let filename_hash: u16 = Archive::_hash_filename(filename);
         let mut fdes: Vec<file_directory_entry::FileDirectoryEntry> = Vec::new();
@@ -561,7 +563,7 @@ impl Archive {
      * @return the tag directory entry found.
      */
     pub fn get_tde(&self, tagno: u32) -> io::Result<tag_directory_entry::TagDirectoryEntry> {
-        let lock = self.tgdr_l.read().unwrap();
+        let _lock = self.tgdr_l.read().unwrap();
 
         let start = self.section_offset[TGDR_S as usize]
             + DIR_SECTION_HEADER_BYTES
@@ -587,7 +589,7 @@ impl Archive {
         &self,
         tagname: String,
     ) -> io::Result<Option<tag_directory_entry::TagDirectoryEntry>> {
-        let lock = self.tgdr_l.read().unwrap();
+        let _lock = self.tgdr_l.read().unwrap();
 
         for i in 0..self.num_tag_dir_slots {
             let start = self.section_offset[TGDR_S as usize]
@@ -655,7 +657,7 @@ impl Archive {
     ) -> io::Result<file_directory_entry::FileDirectoryEntry> {
         let mut need_resize: bool = false;
         {
-            let lock = self.fldr_l.read().unwrap();
+            let _lock = self.fldr_l.read().unwrap();
             if self.num_file_dir_slots_used == self.num_file_dir_slots {
                 if self.num_file_dir_slots >= MAX_FILE_DIR_SLOTS {
                     return Err(io::Error::new(
@@ -671,7 +673,7 @@ impl Archive {
             self._resize_archive(0)?;
         }
 
-        let lock = self.fldr_l.write().unwrap();
+        let _lock = self.fldr_l.write().unwrap();
         let filename_hash: u16 = Archive::_hash_filename(filename);
 
         for i in 0..self.num_file_dir_slots {
@@ -719,7 +721,7 @@ impl Archive {
      * @param fileno the file number to delete.
      */
     fn _delete_fde(&mut self, fileno: u32) -> io::Result<()> {
-        let l = self.fldr_l.write().unwrap();
+        let _l = self.fldr_l.write().unwrap();
 
         let start = self.section_offset[FLDR_S as usize]
             + DIR_SECTION_HEADER_BYTES
@@ -757,7 +759,7 @@ impl Archive {
 
         let mut need_resize: bool = false;
         {
-            let lock = self.tgdr_l.read().unwrap();
+            let _lock = self.tgdr_l.read().unwrap();
             if self.num_tag_dir_slots_used == self.num_tag_dir_slots {
                 if self.num_tag_dir_slots >= MAX_TAG_DIR_SLOTS {
                     return Err(io::Error::new(
@@ -773,7 +775,7 @@ impl Archive {
             self._resize_archive(0)?;
         }
 
-        let lock = self.tgdr_l.write().unwrap();
+        let _lock = self.tgdr_l.write().unwrap();
 
         for i in 0..self.num_tag_dir_slots {
             let start = self.section_offset[TGDR_S as usize]
@@ -814,7 +816,7 @@ impl Archive {
      * @param tagno the tag number to delete.
      */
     fn _delete_tde(&mut self, tagno: u32) -> io::Result<()> {
-        let l = self.tgdr_l.write().unwrap();
+        let _l = self.tgdr_l.write().unwrap();
 
         let start = self.section_offset[TGDR_S as usize]
             + DIR_SECTION_HEADER_BYTES
@@ -850,7 +852,7 @@ impl Archive {
         let mut last_num_file_slots: u16 = 7; // initial value yields 15 on first creation
         let mut last_num_files: u16 = 0;
         {
-            let lock = self.tglk_l.read().unwrap();
+            let _lock = self.tglk_l.read().unwrap();
             let mut bytes_read: usize = 0;
             while bytes_read + tag_lookup_entry::BASE_SIZE_BYTES
                 < self.tag_lookup_section_size as usize
@@ -876,7 +878,7 @@ impl Archive {
         // If the last TLE has enough free slots, insert directly without creating a new TLE.
         if let Some(prev_off) = last_offset {
             if last_num_file_slots - last_num_files >= filenos.len() as u16 {
-                let lock = self.tglk_l.write().unwrap();
+                let _lock = self.tglk_l.write().unwrap();
                 let data_base = self.section_offset[TGLK_S as usize]
                     + DIR_SECTION_HEADER_BYTES
                     + prev_off as usize;
@@ -936,7 +938,7 @@ impl Archive {
         };
 
         let mut new_offset = {
-            let lock = self.tglk_l.read().unwrap();
+            let _lock = self.tglk_l.read().unwrap();
             find_free_slot(
                 &self.mmap_mut,
                 self.section_offset[TGLK_S as usize],
@@ -946,7 +948,7 @@ impl Archive {
 
         if new_offset.is_none() {
             self._resize_archive(0)?;
-            let lock = self.tglk_l.read().unwrap();
+            let _lock = self.tglk_l.read().unwrap();
             new_offset = find_free_slot(
                 &self.mmap_mut,
                 self.section_offset[TGLK_S as usize],
@@ -961,7 +963,7 @@ impl Archive {
         }
 
         let offset = new_offset.unwrap();
-        let lock = self.tglk_l.write().unwrap();
+        let _lock = self.tglk_l.write().unwrap();
 
         let tle = tag_lookup_entry::TagLookupEntry::new(
             tagno,
@@ -1013,7 +1015,7 @@ impl Archive {
      * @return the new file directory entry, or null if none was able to be created.
      */
     fn _delete_tle(&mut self, offset: u16) -> io::Result<()> {
-        let lock = self.tglk_l.write().unwrap();
+        let _lock = self.tglk_l.write().unwrap();
 
         let mut buf: [u8; 2] =
             self.mmap_mut[self.section_offset[TGLK_S as usize] + 4 + offset as usize
@@ -1038,7 +1040,7 @@ impl Archive {
      * @return the offset into the file storage section where the file metadata should start
      */
     fn _find_file_space(&mut self, length: u64, metadata_length: u64) -> io::Result<u64> {
-        let l = self.flst_l.read().unwrap();
+        let _l = self.flst_l.read().unwrap();
 
         let space_needed =
             (length + metadata_length + file_end_metadata::SIZE_BYTES as u64) as usize;
@@ -1328,7 +1330,7 @@ impl Archive {
      * @return io::Result<()> indicating success or failure.
      */
     pub fn _coalesce_flst(&mut self) -> io::Result<()> {
-        let l = self.flst_l.write().unwrap();
+        let _l = self.flst_l.write().unwrap();
         let mut offset = 4; // skip section header
         let section_end = self.file_storage_section_size as usize;
 
@@ -1350,7 +1352,7 @@ impl Archive {
 
             // Find contiguous invalid regions
             if !valid {
-                let mut free_start = offset;
+                let free_start = offset;
                 let mut free_len = full_fm_size + length + file_end_metadata::SIZE_BYTES as usize;
                 let mut next_offset = offset + free_len;
 
@@ -1438,12 +1440,11 @@ impl Archive {
      * @return io::Result<()> indicating success or failure.
      */
     pub fn _coalesce_flst_around(&mut self, offset: u64) -> io::Result<()> {
-        let l = self.flst_l.write().unwrap();
+        let _l = self.flst_l.write().unwrap();
         let section_start = self.section_offset[FLST_S as usize];
-        let section_end = self.file_storage_section_size as usize;
 
         // Find previous region
-        let mut prev_offset = offset as usize;
+        let prev_offset = offset as usize;
         while prev_offset > 4 {
             // Try to find the start of the previous file
             let endmeta_start =
@@ -1476,7 +1477,7 @@ impl Archive {
                 && prev_fm.get_num_tags_count() == 0
             {
                 // Merge with current
-                let mut merge_start = prev_meta_start;
+                let merge_start = prev_meta_start;
                 let mut merge_len = file_metadata::BASE_SIZE_BYTES
                     + prev_length
                     + file_end_metadata::SIZE_BYTES as usize;
@@ -2003,15 +2004,12 @@ impl Archive {
         self.mmap_mut[data_offset..data_offset + data.len()].copy_from_slice(&data);
 
         // 2. Add file directory entry
-        let fde = match self._make_fde(length, parent, filename.clone(), metadata_offset) {
-            Ok(fde) => fde,
-            Err(e) => {
-                // Clean up file storage
-                // (Mark region as invalid, coalesce)
-                self._coalesce_flst_around(metadata_offset).ok();
-                return Err(e);
-            }
-        };
+        if let Err(e) = self._make_fde(length, parent, filename.clone(), metadata_offset) {
+            // Clean up file storage
+            // (Mark region as invalid, coalesce)
+            self._coalesce_flst_around(metadata_offset).ok();
+            return Err(e);
+        }
 
         // 3. Add file to tag lookup entries (last, for cleanup safety)
         for &tagno in &tagnos {
@@ -2156,10 +2154,8 @@ impl Archive {
             return Ok(None);
         }
 
-        // 3. Read file data
-        let data_offset = self.section_offset[FLST_S as usize] + offset as usize + fm.size_bytes();
+        // 3. Read file data length (data itself is loaded lazily via read_file_data)
         let data_len = fm.get_length() as usize;
-        // let data = self.mmap_mut[data_offset..data_offset + data_len].to_vec();
 
         // 4. Read tag names
         let tags: HashSet<String> = fm

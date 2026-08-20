@@ -14,19 +14,8 @@ pub struct RunConfiguration {
 }
 
 // static project information
-const GITHUB_WEB_PATH: &'static str = "https://github.com/sameer-n012/tag-vfs";
-const PROJECT_WEB_PATH: &'static str = "";
 const APP_NAME: &'static str = "file-vault";
 const APP_NAME_PRETTY: &'static str = "File Vault";
-
-// static file locations in JAR
-const DEFAULT_CONFIG_FILE_PATH: &'static str = "/.conf.json";
-const USER_CONFIG_FILE_PATH: &'static str = "/user.conf.json";
-
-// static final locations not in JAR
-const APP_DATA_DIR: &'static str = "filevault";
-const CACHE_DIR: &'static str = "tmp_";
-const APP_ARCHIVE_FILE: &'static str = "archive.dat";
 
 impl RunConfiguration {
     pub fn new(args: Args) -> Self {
@@ -184,9 +173,9 @@ impl RunConfiguration {
     }
 
     pub fn reload_config(&mut self) {
-        self.parse_default_config_file();
-        self.parse_user_config_file();
-        self.parse_command_line_args();
+        let _ = self.parse_default_config_file();
+        let _ = self.parse_user_config_file();
+        let _ = self.parse_command_line_args();
     }
 
     pub fn reset_config(&mut self) {

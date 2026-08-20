@@ -1,8 +1,7 @@
 use crate::data::file_type::FileType;
 use crate::util::style;
 use std::collections::HashSet;
-use std::fs::{self, File};
-use std::io::{self, Read};
+use std::io;
 use std::path::{Path, PathBuf};
 
 pub struct FileInstance {
@@ -45,13 +44,6 @@ impl FileInstance {
         )
     }
 
-    fn view(&self) -> io::Result<Vec<u8>> {
-        let mut file = File::open(&self.path)?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)?;
-        Ok(buffer)
-    }
-
     pub fn open(&self) -> io::Result<()> {
         if cfg!(target_os = "windows") {
             std::process::Command::new("cmd")
@@ -69,33 +61,6 @@ impl FileInstance {
         Ok(())
     }
 
-    fn open_new(&self) -> io::Result<()> {
-        let path = self
-            .path
-            .parent()
-            .unwrap_or_else(|| Path::new(""))
-            .to_path_buf();
-        let mut filename = self.name.clone();
-        if let Some(extension) = self.path.extension() {
-            filename = format!(
-                "{}-temp.{}",
-                self.path.file_stem().unwrap().to_string_lossy(),
-                extension.to_string_lossy()
-            );
-        } else {
-            filename.push_str("-temp");
-        }
-
-        let new_path = path.join(filename);
-        fs::write(&new_path, self.view()?)?;
-
-        // Open the file
-        return self.open();
-    }
-
-    fn delete(&self) -> io::Result<()> {
-        fs::remove_file(&self.path)
-    }
 }
 
 impl ToString for FileInstance {

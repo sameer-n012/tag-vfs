@@ -20,18 +20,16 @@ pub const NUM_TAGS_OFFSET: usize = 15;
 const TAGS_OFFSET: usize = 17;
 
 pub struct FileMetadata {
-    filename_len: u8,
     num_tags: u16,
     fm: Vec<u8>,
 }
 
 impl FileMetadata {
     pub fn from_bytes(fm: Vec<u8>) -> Self {
-        let filename_len = fm[FILENAME_LEN_OFFSET];
         let mut buf = [0u8; 2];
         buf.copy_from_slice(&fm[NUM_TAGS_OFFSET..NUM_TAGS_OFFSET + 2]);
         let num_tags = u16::from_be_bytes(buf);
-        FileMetadata { filename_len, num_tags, fm }
+        FileMetadata { num_tags, fm }
     }
 
     pub fn new(
@@ -70,7 +68,7 @@ impl FileMetadata {
         fm.extend_from_slice(&tag_vec_u8);
         fm.extend_from_slice(filename.as_bytes());
 
-        FileMetadata { filename_len, num_tags: tags_len, fm }
+        FileMetadata { num_tags: tags_len, fm }
     }
 
     pub fn get_fileno(&self) -> u32 {
