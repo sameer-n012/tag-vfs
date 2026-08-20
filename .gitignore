@@ -27,3 +27,5 @@ cmake-build-*/
 
 # Rust
 target/
+
+CLAUDE.md
